@@ -1,6 +1,5 @@
 /vendor/
 /documentos/
-db.php
 .env
 .DS_Store
 *.log
