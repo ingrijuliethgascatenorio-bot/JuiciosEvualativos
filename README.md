@@ -66,13 +66,3 @@ El **Sistema de Gestión de Juicios Evaluativos (SGJE)** es una plataforma web a
 4. **Iniciar la aplicación:**
    Accede a la aplicación desde tu navegador a través de `http://localhost/tu-carpeta/index.php` (o usa el servidor interno de PHP `php -S localhost:8000`).
 
-## ✨ Estandarización y Buenas Prácticas
-
-En sus versiones más recientes, el SGJE ha sido refactorizado para garantizar:
-- **Código Limpio:** Eliminación de redundancias, emojis y elementos no profesionales de la interfaz, optando por una iconografía limpia y consistente (SVG/Lucide).
-- **Rendimiento:** Implementación de paginación robusta del lado del cliente (`client-side pagination`) para manejar grandes volúmenes de datos en las vistas sin recargar la página.
-- **Seguridad:** Uso estricto de consultas preparadas (`Prepared Statements` con PDO) para evitar inyecciones SQL.
-- **Escalabilidad:** Estructura modular y separación clara entre el backend (APIs JSON) y el frontend (Vanilla JS consumiendo fetch).
-
----
-*Desarrollado para la optimización de los procesos de evaluación en la formación profesional.*
