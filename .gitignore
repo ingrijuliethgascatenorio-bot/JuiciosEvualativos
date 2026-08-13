@@ -1,5 +1,8 @@
 /vendor/
 /documentos/
 .env
+.composer.lock
+.composer.json
+.schema.sql
 .DS_Store
 *.log

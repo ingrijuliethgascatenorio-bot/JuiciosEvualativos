@@ -21,11 +21,20 @@ $ficha  = $_GET['ficha']  ?? '';
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 /**
+ * Condición SQL que excluye a los aprendices que ya no están activos
+ * (retirados, cancelados, trasladados, aplazados) de las estadísticas de avance.
+ * Requiere que la consulta tenga un JOIN a "estados e" sobre el aprendiz.
+ */
+function estadoActivoCondicion(): string {
+    return "e.nombre NOT IN ('RETIRO VOLUNTARIO', 'CANCELADO', 'TRASLADADO', 'APLAZADO')";
+}
+
+/**
  * Construye la cláusula WHERE y devuelve [string_where, array_params]
- * Filtra por ficha y excluye retirados por defecto.
+ * Filtra por ficha y excluye a los inactivos por defecto.
  */
 function buildWhere(string $ficha, string $alias = 'a'): array {
-    $where  = ["e.nombre != 'RETIRO VOLUNTARIO'"];
+    $where  = [estadoActivoCondicion()];
     $params = [];
 
     if ($ficha !== '') {
@@ -181,7 +190,7 @@ function getRanking(PDO $pdo, string $ficha): array {
 // 3. SEMÁFORO DE COMPETENCIAS
 // ══════════════════════════════════════════════════════════════════════════════
 function getSemaforoCompetencias(PDO $pdo, string $ficha): array {
-    $where  = [];
+    $where  = [estadoActivoCondicion()];
     $params = [];
 
     if ($ficha !== '') {
@@ -208,6 +217,7 @@ function getSemaforoCompetencias(PDO $pdo, string $ficha): array {
         JOIN resultados r ON r.codigo_comp = c.codigo_comp
         LEFT JOIN matricula_resultados mr ON mr.codigo_resul = r.codigo_resul
         LEFT JOIN aprendices a  ON a.numero_documento = mr.num_documento_aprendiz
+        LEFT JOIN estados e ON e.id_estado = a.id_estado
         LEFT JOIN juicios_catalogo jc ON jc.id_juicio_cat = mr.id_juicio_cat
         LEFT JOIN fichas f ON f.numero_ficha = a.numero_ficha
         $whereClause
@@ -321,7 +331,7 @@ function getAlertas(PDO $pdo, string $ficha): array {
 // 5. ESTADÍSTICAS POR FICHA
 // ══════════════════════════════════════════════════════════════════════════════
 function getEstadisticasFicha(PDO $pdo, string $ficha): array {
-    $where  = [];
+    $where  = [estadoActivoCondicion()];
     $params = [];
 
     if ($ficha !== '') {
@@ -357,6 +367,7 @@ function getEstadisticasFicha(PDO $pdo, string $ficha): array {
         FROM fichas f
         JOIN programas p ON p.codigo_programa = f.codigo_programa
         JOIN aprendices a ON a.numero_ficha = f.numero_ficha
+        JOIN estados e ON e.id_estado = a.id_estado
         LEFT JOIN matricula_resultados mr
                ON mr.num_documento_aprendiz = a.numero_documento
         LEFT JOIN juicios_catalogo jc ON jc.id_juicio_cat = mr.id_juicio_cat

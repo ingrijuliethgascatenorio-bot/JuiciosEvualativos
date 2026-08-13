@@ -5,6 +5,22 @@ header('Content-Type: application/json');
 
 $action = $_GET['action'] ?? 'get_dashboard';
 
+// Acciones que borran datos: requieren la clave admin definida en .env (ADMIN_TOKEN)
+$accionesProtegidas = ['delete_all', 'delete_ficha'];
+if (in_array($action, $accionesProtegidas, true)) {
+    $tokenEsperado = $env['ADMIN_TOKEN'] ?? '';
+    $tokenRecibido = $_GET['token'] ?? ($_SERVER['HTTP_X_ADMIN_TOKEN'] ?? '');
+
+    if ($tokenEsperado === '' || !hash_equals($tokenEsperado, $tokenRecibido)) {
+        http_response_code(403);
+        echo json_encode(['success' => false, 'message' => 'No autorizado: falta o es incorrecta la clave de administrador.']);
+        exit;
+    }
+}
+
+// Estados que se excluyen de las estadísticas de avance (no del conteo por estado del chart)
+const ESTADOS_INACTIVOS_SQL = "e.nombre NOT IN ('RETIRO VOLUNTARIO', 'CANCELADO', 'TRASLADADO', 'APLAZADO')";
+
 if ($action === 'get_dashboard') {
     $ficha = $_GET['ficha'] ?? '';
     $estado = $_GET['estado'] ?? '';
@@ -12,7 +28,10 @@ if ($action === 'get_dashboard') {
     $competencia = $_GET['competencia'] ?? '';
     $documento = $_GET['documento'] ?? '';
 
-    $where = [];
+    // Este filtro aplica a los conteos de avance (total, aprobados, por evaluar, tabla),
+    // pero NO al chart de estados (stmt4), que debe seguir mostrando a todos, incluidos
+    // retirados/cancelados/trasladados/aplazados.
+    $where = [ESTADOS_INACTIVOS_SQL];
     $params = [];
 
     if ($ficha !== '') {
@@ -38,6 +57,12 @@ if ($action === 'get_dashboard') {
 
     $whereClause = count($where) > 0 ? "WHERE " . implode(" AND ", $where) : "";
     $limitClause = "LIMIT 500"; // Restauramos el límite normal para ver a todos los aprendices
+
+    // Where del chart de estados: usa los mismos filtros del usuario (ficha/juicio/etc.)
+    // pero SIN excluir a los inactivos, porque este chart es justamente el que reporta
+    // cuántos hay en cada estado (incluidos retirados, cancelados, etc.).
+    $whereChart = array_values(array_filter($where, fn($cond) => $cond !== ESTADOS_INACTIVOS_SQL));
+    $whereClauseChart = count($whereChart) > 0 ? "WHERE " . implode(" AND ", $whereChart) : "";
 
     // 1. Total Aprendices
     $stmt = $pdo->prepare("SELECT COUNT(DISTINCT a.numero_documento) as total FROM aprendices a 
@@ -84,7 +109,7 @@ if ($action === 'get_dashboard') {
                             LEFT JOIN juicios_catalogo jc ON mr.id_juicio_cat = jc.id_juicio_cat
                             LEFT JOIN resultados r ON mr.codigo_resul = r.codigo_resul
                             LEFT JOIN competencias c ON r.codigo_comp = c.codigo_comp
-                            $whereClause
+                            $whereClauseChart
                             GROUP BY e.nombre");
     $stmt4->execute($params);
     $estadosData = $stmt4->fetchAll(PDO::FETCH_ASSOC);
