@@ -11,7 +11,8 @@ $pass = getenv('DB_PASS') ?: ($env['DB_PASS'] ?? 'tu-contraseña');
 $port = getenv('DB_PORT') ?: ($env['DB_PORT'] ?? '5432');
 
 try {
-    $dsn = "pgsql:host=$host;port=$port;dbname=$db";
+    $sslmode = getenv('DB_SSLMODE') ?: ($env['DB_SSLMODE'] ?? 'require');
+    $dsn = "pgsql:host=$host;port=$port;dbname=$db;sslmode=$sslmode";
 
     $pdo = new PDO(
         $dsn,
