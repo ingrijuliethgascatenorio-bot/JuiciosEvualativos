@@ -14,6 +14,13 @@ try {
     $sslmode = getenv('DB_SSLMODE') ?: ($env['DB_SSLMODE'] ?? 'require');
     $dsn = "pgsql:host=$host;port=$port;dbname=$db;sslmode=$sslmode";
 
+    // Detectar si es un host de Neon y agregar el endpoint ID para clientes antiguos sin soporte SNI
+    if (strpos($host, 'neon.tech') !== false) {
+        $parts = explode('.', $host);
+        $endpoint = $parts[0];
+        $dsn .= ";options=endpoint=$endpoint";
+    }
+
     $pdo = new PDO(
         $dsn,
         $user,
