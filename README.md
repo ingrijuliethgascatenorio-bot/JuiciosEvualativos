@@ -1,7 +1,7 @@
 # Sistema de Gestión de Juicios Evaluativos (SGJE)
 
 El **Sistema de Gestión de Juicios Evaluativos (SGJE)** es una plataforma web administrativa diseñada para el seguimiento y análisis de los resultados de aprendizaje de los aprendices. Permite visualizar estados de formación, gestionar resultados, monitorear competencias y evaluar el riesgo académico mediante paneles de inteligencia y alertas automatizadas.
-
+ 
 ## 🚀 Características Principales
 
 - **Dashboard Principal:** Vista unificada del estado general, total de aprendices, juicios evaluativos y accesos rápidos.

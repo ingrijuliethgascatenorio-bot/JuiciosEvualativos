@@ -83,24 +83,22 @@ document.addEventListener('DOMContentLoaded', () => {
             return `
             <tr>
                 <td>
-                    <div style="display:flex;align-items:center;gap:12px;">
-                        <div style="width:34px;height:34px;border-radius:50%;background:#eff6ff;color:#2563eb;
-                            display:flex;align-items:center;justify-content:center;font-weight:700;font-size:11px;flex-shrink:0;">
+                    <div class="table-avatar-wrap">
+                        <div class="table-avatar">
                             ${initials}
                         </div>
-                        <div>
-                            <div style="font-weight:600;color:#0f172a;">${row.nombres} ${row.apellidos}</div>
-                            <div style="font-size:11px;color:#94a3b8;font-family:monospace;">${row.numero_documento}</div>
+                        <div class="table-user-info">
+                            <div class="table-user-name">${row.nombres} ${row.apellidos}</div>
+                            <div class="table-user-sub">${row.numero_documento}</div>
                         </div>
                     </div>
                 </td>
-                <td style="font-weight:500;">${row.numero_ficha}</td>
+                <td style="font-weight: 500;">${row.numero_ficha}</td>
                 <td title="${row.nombre_comp || ''}">${comp}</td>
                 <td title="${row.nombre_resultado || ''}">${result}</td>
                 <td><span class="badge ${badge}">${row.juicio || 'N/A'}</span></td>
                 <td>
-                    <a href="detalle.php?documento=${row.numero_documento}"
-                       style="color:#2563eb;font-weight:600;text-decoration:none;font-size:12px;">
+                    <a href="detalle.php?documento=${row.numero_documento}" class="table-link">
                         Ver Perfil
                     </a>
                 </td>

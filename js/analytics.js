@@ -150,9 +150,7 @@ function renderRankingList(id, lista) {
         return `
         <div class="ranking-row">
             <div class="rank-pos ${posCls}">${a.posicion}</div>
-            <div style="width:32px;height:32px;border-radius:50%;background:#eff6ff;
-                color:#2563eb;display:flex;align-items:center;justify-content:center;
-                font-weight:700;font-size:11px;flex-shrink:0;">${iniciales}</div>
+            <div class="table-avatar">${iniciales}</div>
             <div style="flex:1;min-width:0;">
                 <div class="rank-name">${a.nombres} ${a.apellidos}</div>
                 <div class="rank-ficha">Ficha ${a.numero_ficha} · ${a.aprobados}/${a.total_resultados} RA</div>
@@ -332,13 +330,11 @@ function aplicarFiltroRiesgo() {
         return `
         <tr>
             <td>
-                <div style="display:flex;align-items:center;gap:10px;">
-                    <div style="width:32px;height:32px;border-radius:50%;background:#eff6ff;
-                        color:#2563eb;display:flex;align-items:center;justify-content:center;
-                        font-weight:700;font-size:11px;flex-shrink:0;">${iniciales}</div>
-                    <div>
-                        <div style="font-weight:600;">${a.nombres} ${a.apellidos}</div>
-                        <div style="font-size:11px;color:#94a3b8;font-family:'JetBrains Mono',monospace;">${a.numero_documento}</div>
+                <div class="table-avatar-wrap">
+                    <div class="table-avatar">${iniciales}</div>
+                    <div class="table-user-info">
+                        <div class="table-user-name">${a.nombres} ${a.apellidos}</div>
+                        <div class="table-user-sub">${a.numero_documento}</div>
                     </div>
                 </div>
             </td>
@@ -349,8 +345,7 @@ function aplicarFiltroRiesgo() {
             <td>${barraProgreso(a.porcentaje_avance, cls)}</td>
             <td><span class="badge-riesgo riesgo-${a.nivel_riesgo}">${a.nivel_riesgo}</span></td>
             <td>
-                <a href="detalle.php?documento=${a.numero_documento}"
-                   style="color:var(--primary);font-weight:600;text-decoration:none;font-size:12px;">
+                <a href="detalle.php?documento=${a.numero_documento}" class="table-link">
                    Ver →
                 </a>
             </td>
@@ -396,7 +391,7 @@ function barraProgreso(pct, cls) {
         <div class="progress-bar-wrap">
             <div class="progress-bar ${cls}" style="width:${pct}%"></div>
         </div>
-        <span class="progress-num" style="color:var(--${cls === 'verde' ? 'green' : cls === 'amarillo' ? 'yellow' : 'red'})">
+        <span class="progress-num" style="color:var(--${cls === 'verde' ? 'success' : cls === 'amarillo' ? 'warning' : 'danger'})">
             ${pct}%
         </span>
     </div>`;

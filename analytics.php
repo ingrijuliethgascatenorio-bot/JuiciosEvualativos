@@ -8,60 +8,63 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
+    <link rel="stylesheet" href="css/style.css">
     <link rel="stylesheet" href="css/analytics.css">
 </head>
 <body>
 
-<!-- ═══════════════════ SIDEBAR (igual al resto del proyecto) ═══════════════ -->
-<aside class="sidebar">
-    <div class="sidebar-header">
-        <div class="logo-box"><i data-lucide="bar-chart-3"></i></div>
-        <span class="brand-name">SGJE</span>
-    </div>
-    <nav class="sidebar-nav">
-        <div class="nav-label">Menú Principal</div>
-        <a href="index.php" class="nav-item"><i data-lucide="layout-dashboard"></i> <span>Dashboard</span></a>
-        <a href="aprendices.php" class="nav-item"><i data-lucide="users"></i> <span>Aprendices</span></a>
-        <a href="analisis.php" class="nav-item"><i data-lucide="search"></i> <span>Análisis Proyecto</span></a>
-        <a href="analytics.php" class="nav-item active"><i data-lucide="brain-circuit"></i> <span>Inteligencia</span></a>
-        <a href="alertas.php" class="nav-item"><i data-lucide="bell-ring"></i> <span>Alertas</span></a>
-        <div class="nav-label">Sistema</div>
-        <a href="#" onclick="confirmReset()" class="nav-item" style="color: #ef4444;"><i data-lucide="trash-2"></i> <span>Limpiar Todo</span></a>
-    </nav>
-</aside>
+    <aside class="sidebar">
+        <div class="sidebar-header">
+            <div class="logo-box"><i data-lucide="bar-chart-3"></i></div>
+            <div>
+                <span class="brand-name">SGJE</span>
+                <span class="sidebar-desc">Juicios Evaluativos</span>
+            </div>
+        </div>
+        <nav class="sidebar-nav">
+            <div class="nav-label">Menú Principal</div>
+            <a href="index.php" class="nav-item"><i data-lucide="layout-dashboard"></i> <span>Dashboard</span></a>
+            <a href="aprendices.php" class="nav-item"><i data-lucide="users"></i> <span>Aprendices</span></a>
+            <a href="analisis.php" class="nav-item"><i data-lucide="search"></i> <span>Análisis</span></a>
+            <a href="analytics.php" class="nav-item active"><i data-lucide="brain-circuit"></i> <span>Analytics</span></a>
+            <a href="alertas.php" class="nav-item"><i data-lucide="bell-ring"></i> <span>Alertas</span></a>
+            <a href="index.php#uploadSection" class="nav-item"><i data-lucide="file-up"></i> <span>Carga Masiva</span></a>
+            <div class="nav-label">Sistema</div>
+            <a href="#" onclick="confirmReset()" class="nav-item" style="color: #ef4444;"><i data-lucide="trash-2"></i> <span>Limpiar Todo</span></a>
+        </nav>
+    </aside>
 
-<!-- ═══════════════════════════ MAIN CONTENT ══════════════════════════════════ -->
-<main class="main-content">
-    <header class="topbar">
-        <h1>Inteligencia Académica</h1>
-        <div class="topbar-actions">
-            <select id="filtroFicha" class="form-control" style="width:180px;" onchange="cargarTodo()">
-                <option value="">Todas las fichas</option>
-            </select>
-            <button onclick="cargarTodo()" class="btn btn-primary">
-                <i data-lucide="refresh-cw" style="width:14px;height:14px;"></i> Actualizar
-            </button>
-            <!-- Campana de notificaciones -->
-            <div class="notif-wrap" id="notifWrap">
-                <button class="notif-bell" id="notifBellBtn" onclick="toggleNotifPanel()" aria-label="Notificaciones">
-                    <i data-lucide="bell"></i>
-                    <span class="notif-badge" id="notifBadge" style="display:none;">0</span>
+    <main class="main-content">
+        <header class="topbar">
+            <h1>Inteligencia Académica</h1>
+            <div class="topbar-actions">
+                <select id="filtroFicha" class="form-control" style="width:180px;" onchange="cargarTodo()">
+                    <option value="">Todas las fichas</option>
+                </select>
+                <button onclick="cargarTodo()" class="btn btn-primary">
+                    <i data-lucide="refresh-cw" style="width:14px;height:14px;"></i> Actualizar
                 </button>
-                <div class="notif-panel" id="notifPanel">
-                    <div class="notif-panel-header">
-                        <span>🔔 Notificaciones</span>
-                        <span class="notif-panel-total" id="notifTotal">—</span>
-                    </div>
-                    <div class="notif-panel-list" id="notifList">
-                        <div class="loading-msg">Cargando…</div>
-                    </div>
-                    <div class="notif-panel-footer">
-                        <a href="alertas.php">Ver todas las alertas →</a>
+                <!-- Campana de notificaciones -->
+                <div class="notif-wrap-global" id="notifWrap">
+                    <button class="notif-bell-btn-global" id="notifBellBtn" onclick="toggleNotifPanel()" aria-label="Notificaciones">
+                        <i data-lucide="bell" id="bellIcon"></i>
+                        <span class="notif-badge-global" id="notifBadge" style="display:none;">0</span>
+                    </button>
+                    <div class="notif-panel-global" id="notifPanel">
+                        <div class="notif-panel-header-global">
+                            <span>Notificaciones</span>
+                            <span class="notif-panel-total-global" id="notifTotal">—</span>
+                        </div>
+                        <div class="notif-panel-list-global" id="notifList">
+                            <div class="loading-msg">Cargando…</div>
+                        </div>
+                        <div class="notif-ver-todas">
+                            <a href="alertas.php">Ver todas las alertas →</a>
+                        </div>
                     </div>
                 </div>
             </div>
-        </div>
-    </header>
+        </header>
 
     <div class="analytics-container">
 
