@@ -24,6 +24,17 @@ document.addEventListener('DOMContentLoaded', () => {
     // CARGA PRINCIPAL
     // ═════════════════════════════════════════════════════════════════════════
     async function loadDashboardData() {
+        if (filtersForm) {
+            const urlParams = new URLSearchParams(window.location.search);
+            const fInput = document.getElementById('ficha');
+            const eInput = document.getElementById('estado');
+            const jInput = document.getElementById('juicio');
+
+            if (urlParams.has('ficha') && fInput && !fInput.value) fInput.value = urlParams.get('ficha');
+            if (urlParams.has('estado') && eInput && !eInput.value) eInput.value = urlParams.get('estado');
+            if (urlParams.has('juicio') && jInput && !jInput.value) jInput.value = urlParams.get('juicio');
+        }
+
         const params = filtersForm
             ? new URLSearchParams(new FormData(filtersForm)).toString()
             : '';
@@ -50,13 +61,28 @@ document.addEventListener('DOMContentLoaded', () => {
     function updateStats(data) {
         const set = (id, val) => {
             const el = document.getElementById(id);
-            if (el) el.textContent = val;
+            if (el) el.textContent = (val !== undefined && val !== null) ? val : '—';
         };
-        set('totalAprendices',  data.totalAprendices);
-        set('juiciosAprobados', data.juiciosAprobados);
-        set('juiciosPorEvaluar', data.juiciosPorEvaluar);
-        set('avanceGeneral',    data.avanceGeneral + '%');
+        set('totalAprendices',  data.totalAprendices ?? 0);
+        set('juiciosAprobados', data.juiciosAprobados ?? 0);
+        set('juiciosPorEvaluar', data.juiciosPorEvaluar ?? 0);
+        
+        const avance = (data.avanceGeneral !== undefined && data.avanceGeneral !== null)
+            ? Number(data.avanceGeneral).toFixed(2) + '%'
+            : '0%';
+        set('avanceGeneral', avance);
     }
+
+    // Guardar contexto para navegación hacia detalle.php
+    window.guardarContextoDashboard = function() {
+        const ctx = {
+            seccionOrigen: 'index.php',
+            ficha: document.getElementById('ficha')?.value || '',
+            estado: document.getElementById('estado')?.value || '',
+            juicio: document.getElementById('juicio')?.value || ''
+        };
+        sessionStorage.setItem('sgje_nav_context', JSON.stringify(ctx));
+    };
 
     // ═════════════════════════════════════════════════════════════════════════
     // TABLA CON PAGINACIÓN
@@ -74,11 +100,23 @@ document.addEventListener('DOMContentLoaded', () => {
         const start    = (currentPage - 1) * ITEMS_PER_PAGE;
         const pageData = allRows.slice(start, start + ITEMS_PER_PAGE);
 
+        const fVal = document.getElementById('ficha')?.value || '';
+        const eVal = document.getElementById('estado')?.value || '';
+        const jVal = document.getElementById('juicio')?.value || '';
+
         tbody.innerHTML = pageData.map(row => {
             const badge    = row.juicio === 'APROBADO' ? 'aprobado' : 'por-evaluar';
             const initials = ((row.nombres || '?')[0] + (row.apellidos || '?')[0]).toUpperCase();
             const comp     = (row.nombre_comp     || '').substring(0, 32) + (row.nombre_comp?.length     > 32 ? '...' : '');
             const result   = (row.nombre_resultado || '').substring(0, 32) + (row.nombre_resultado?.length > 32 ? '...' : '');
+
+            const queryParams = new URLSearchParams({
+                documento: row.numero_documento,
+                from: 'index.php',
+                ...(fVal ? { ficha: fVal } : {}),
+                ...(eVal ? { estado: eVal } : {}),
+                ...(jVal ? { juicio: jVal } : {})
+            }).toString();
 
             return `
             <tr>
@@ -98,7 +136,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 <td title="${row.nombre_resultado || ''}">${result}</td>
                 <td><span class="badge ${badge}">${row.juicio || 'N/A'}</span></td>
                 <td>
-                    <a href="detalle.php?documento=${row.numero_documento}" class="table-link">
+                    <a href="detalle.php?${queryParams}" onclick="guardarContextoDashboard()" class="table-link">
                         Ver Perfil
                     </a>
                 </td>
@@ -149,15 +187,27 @@ document.addEventListener('DOMContentLoaded', () => {
         const canvasJ = document.getElementById('chartJuicios');
         if (!canvasE || !canvasJ) return;
 
+        if (typeof Chart === 'undefined') {
+            console.warn('Chart.js no está disponible.');
+            return;
+        }
+
         try {
+            const estados = Array.isArray(data.estadosData) ? data.estadosData : [];
+            const labelsEstados = estados.map(e => e.nombre);
+            const dataEstados = estados.map(e => Number(e.count || 0));
+            const tieneDatosEstados = dataEstados.some(v => v > 0);
+
             if (chartEstadosInstance) chartEstadosInstance.destroy();
             chartEstadosInstance = new Chart(canvasE.getContext('2d'), {
                 type: 'doughnut',
                 data: {
-                    labels: data.estadosData.map(e => e.nombre),
+                    labels: tieneDatosEstados ? labelsEstados : ['Sin datos'],
                     datasets: [{
-                        data: data.estadosData.map(e => Number(e.count)),
-                        backgroundColor: ['#2563eb', '#059669', '#d97706', '#dc2626', '#7c3aed'],
+                        data: tieneDatosEstados ? dataEstados : [1],
+                        backgroundColor: tieneDatosEstados 
+                            ? ['#2563eb', '#059669', '#d97706', '#dc2626', '#7c3aed', '#0284c7', '#9333ea'] 
+                            : ['#e2e8f0'],
                         borderWidth: 0
                     }]
                 },
@@ -169,10 +219,16 @@ document.addEventListener('DOMContentLoaded', () => {
                         legend: {
                             position: 'bottom',
                             labels: { boxWidth: 10, usePointStyle: true, font: { family: 'Outfit', size: 11 } }
+                        },
+                        tooltip: {
+                            enabled: tieneDatosEstados
                         }
                     }
                 }
             });
+
+            const aprobados = Number(data.juiciosAprobados) || 0;
+            const pendientes = Number(data.juiciosPorEvaluar) || 0;
 
             if (chartJuiciosInstance) chartJuiciosInstance.destroy();
             chartJuiciosInstance = new Chart(canvasJ.getContext('2d'), {
@@ -180,7 +236,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 data: {
                     labels: ['Aprobados', 'Pendientes'],
                     datasets: [{
-                        data: [Number(data.juiciosAprobados), Number(data.juiciosPorEvaluar)],
+                        data: [aprobados, pendientes],
                         backgroundColor: ['#059669', '#d97706'],
                         borderRadius: 8
                     }]

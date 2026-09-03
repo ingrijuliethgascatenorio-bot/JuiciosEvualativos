@@ -213,6 +213,24 @@
                 }
             }
 
+            function guardarContextoAprendices() {
+                const ficha = document.getElementById('ficha')?.value || '';
+                const estado = document.getElementById('estado')?.value || '';
+                const juicio = document.getElementById('juicio')?.value || '';
+                const search = document.getElementById('search')?.value || '';
+                const ctx = {
+                    seccionOrigen: 'aprendices.php',
+                    ficha,
+                    estado,
+                    juicio,
+                    busqueda: search,
+                    search
+                };
+                sessionStorage.setItem('sgje_nav_context', JSON.stringify(ctx));
+                return ctx;
+            }
+            window.guardarContextoAprendices = guardarContextoAprendices;
+
             function renderTable() {
                 if(currentData.length === 0) {
                     tableBody.innerHTML = '<tr><td colspan="6" style="text-align: center; padding: 40px;">No se encontraron resultados</td></tr>';
@@ -224,6 +242,11 @@
                 const start = (currentPage - 1) * itemsPerPage;
                 const end = start + itemsPerPage;
                 const pageData = currentData.slice(start, end);
+
+                const fVal = document.getElementById('ficha')?.value || '';
+                const eVal = document.getElementById('estado')?.value || '';
+                const jVal = document.getElementById('juicio')?.value || '';
+                const sVal = document.getElementById('search')?.value || '';
                 
                 tableBody.innerHTML = '';
                 pageData.forEach(ap => {
@@ -232,6 +255,16 @@
                     const pct = ap.total > 0 ? ((ap.aprobados / ap.total) * 100).toFixed(2) : 0;
                     const cleanState = (ap.estado || '').toLowerCase().replace(/ /g, '-');
                     const clsAvance = pct >= 80 ? 'verde' : pct >= 50 ? 'amarillo' : 'rojo';
+
+                    const queryParams = new URLSearchParams({
+                        documento: ap.numero_documento,
+                        from: 'aprendices.php',
+                        ...(fVal ? { ficha: fVal } : {}),
+                        ...(eVal ? { estado: eVal } : {}),
+                        ...(jVal ? { juicio: jVal } : {}),
+                        ...(sVal ? { search: sVal } : {})
+                    }).toString();
+
                     tr.innerHTML = `
                         <td>
                             <div class="table-avatar-wrap">
@@ -250,7 +283,7 @@
                                 <span class="progress-num" style="color:var(--${clsAvance === 'verde' ? 'success' : clsAvance === 'amarillo' ? 'warning' : 'danger'});">${pct}%</span>
                             </div>
                         </td>
-                        <td><a href="detalle.php?documento=${ap.numero_documento}" class="table-link">Ver Perfil</a></td>
+                        <td><a href="detalle.php?${queryParams}" onclick="guardarContextoAprendices()" class="table-link">Ver Perfil</a></td>
                     `;
                     tableBody.appendChild(tr);
                 });
@@ -289,15 +322,65 @@
                 renderTable();
             }
 
-            filtersForm.addEventListener('change', fetchData);
+            filtersForm.addEventListener('change', () => {
+                guardarContextoAprendices();
+                fetchData();
+            });
             document.getElementById('search').addEventListener('input', () => {
                 clearTimeout(this.st);
-                this.st = setTimeout(fetchData, 400);
+                this.st = setTimeout(() => {
+                    guardarContextoAprendices();
+                    fetchData();
+                }, 400);
             });
 
+            async function restaurarYEjecutar() {
+                await loadFichas();
 
-            loadFichas();
-            fetchData();
+                const urlParams = new URLSearchParams(window.location.search);
+                let f = urlParams.get('ficha');
+                let e = urlParams.get('estado');
+                let j = urlParams.get('juicio');
+                let s = urlParams.get('search');
+
+                if (!f && !e && !j && !s) {
+                    try {
+                        const raw = sessionStorage.getItem('sgje_nav_context');
+                        if (raw) {
+                            const ctx = JSON.parse(raw);
+                            if (ctx.seccionOrigen === 'aprendices.php' || !ctx.seccionOrigen) {
+                                f = ctx.ficha || '';
+                                e = ctx.estado || '';
+                                j = ctx.juicio || '';
+                                s = ctx.busqueda || ctx.search || '';
+                            }
+                        }
+                    } catch(_) {}
+                }
+
+                const selectFicha = document.getElementById('ficha');
+                const selectEstado = document.getElementById('estado');
+                const selectJuicio = document.getElementById('juicio');
+                const inputSearch = document.getElementById('search');
+
+                if (f && selectFicha) {
+                    if (!Array.from(selectFicha.options).some(opt => opt.value === f)) {
+                        const opt = document.createElement('option');
+                        opt.value = f;
+                        opt.textContent = `Ficha ${f}`;
+                        selectFicha.appendChild(opt);
+                    }
+                    selectFicha.value = f;
+                }
+                if (e && selectEstado) selectEstado.value = e;
+                if (j && selectJuicio) selectJuicio.value = j;
+                if (s && inputSearch) inputSearch.value = s;
+
+                guardarContextoAprendices();
+                await fetchData();
+            }
+
+            restaurarYEjecutar();
             lucide.createIcons();
         });
 

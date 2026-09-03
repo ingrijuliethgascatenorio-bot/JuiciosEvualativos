@@ -22,11 +22,11 @@ if (in_array($action, $accionesProtegidas, true)) {
 const ESTADOS_INACTIVOS_SQL = "e.nombre NOT IN ('RETIRO VOLUNTARIO', 'CANCELADO', 'TRASLADADO', 'APLAZADO')";
 
 if ($action === 'get_dashboard') {
-    $ficha = $_GET['ficha'] ?? '';
-    $estado = $_GET['estado'] ?? '';
-    $juicio = $_GET['juicio'] ?? '';
-    $competencia = $_GET['competencia'] ?? '';
-    $documento = $_GET['documento'] ?? '';
+    $ficha = trim($_GET['ficha'] ?? '');
+    $estado = trim($_GET['estado'] ?? '');
+    $juicio = trim($_GET['juicio'] ?? '');
+    $competencia = trim($_GET['competencia'] ?? '');
+    $documento = trim($_GET['documento'] ?? '');
 
     // Este filtro aplica a los conteos de avance (total, aprobados, por evaluar, tabla),
     // pero NO al chart de estados (stmt4), que debe seguir mostrando a todos, incluidos
@@ -74,7 +74,7 @@ if ($action === 'get_dashboard') {
                            LEFT JOIN competencias c ON r.codigo_comp = c.codigo_comp AND c.codigo_programa = f.codigo_programa
                            $whereClause");
     $stmt->execute($params);
-    $totalAprendices = $stmt->fetch(PDO::FETCH_ASSOC)['total'];
+    $totalAprendices = (int)($stmt->fetch(PDO::FETCH_ASSOC)['total'] ?? 0);
 
     // 2. Juicios Aprobados
     $stmt2 = $pdo->prepare("SELECT COUNT(*) as total FROM matricula_resultados mr
@@ -86,7 +86,7 @@ if ($action === 'get_dashboard') {
                             JOIN competencias c ON r.codigo_comp = c.codigo_comp AND c.codigo_programa = f.codigo_programa
                             $whereClause " . ($whereClause ? "AND jc.descripcion = 'APROBADO'" : "WHERE jc.descripcion = 'APROBADO'"));
     $stmt2->execute($params);
-    $juiciosAprobados = $stmt2->fetch(PDO::FETCH_ASSOC)['total'];
+    $juiciosAprobados = (int)($stmt2->fetch(PDO::FETCH_ASSOC)['total'] ?? 0);
 
     // 3. Juicios Por Evaluar
     $stmt3 = $pdo->prepare("SELECT COUNT(*) as total FROM matricula_resultados mr
@@ -98,7 +98,7 @@ if ($action === 'get_dashboard') {
                             JOIN competencias c ON r.codigo_comp = c.codigo_comp AND c.codigo_programa = f.codigo_programa
                             $whereClause " . ($whereClause ? "AND jc.descripcion = 'POR EVALUAR'" : "WHERE jc.descripcion = 'POR EVALUAR'"));
     $stmt3->execute($params);
-    $juiciosPorEvaluar = $stmt3->fetch(PDO::FETCH_ASSOC)['total'];
+    $juiciosPorEvaluar = (int)($stmt3->fetch(PDO::FETCH_ASSOC)['total'] ?? 0);
 
     // Avance General %
     $totalJuicios = $juiciosAprobados + $juiciosPorEvaluar;

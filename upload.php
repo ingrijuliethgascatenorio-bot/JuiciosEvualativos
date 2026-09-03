@@ -106,6 +106,32 @@ if (!function_exists('getCol')) {
     }
 }
 
+if (!function_exists('normalizarNumeroFicha')) {
+    function normalizarNumeroFicha($val): string {
+        if ($val === null) return '';
+        $str = trim((string)$val);
+        if (strpos($str, '.') !== false) {
+            $parts = explode('.', $str);
+            $str = $parts[0];
+        }
+        $clean = preg_replace('/[^0-9]/', '', $str);
+        $clean = ltrim($clean, '0');
+        return $clean !== '' ? $clean : '';
+    }
+}
+
+if (!function_exists('normalizarDocumentoAprendiz')) {
+    function normalizarDocumentoAprendiz($val): string {
+        if ($val === null) return '';
+        $str = trim((string)$val);
+        if (strpos($str, '.') !== false) {
+            $parts = explode('.', $str);
+            $str = $parts[0];
+        }
+        return strtoupper(trim(preg_replace('/[^0-9A-Za-z]/', '', $str)));
+    }
+}
+
 if (!function_exists('recalcularMetricasFicha')) {
     function recalcularMetricasFicha(PDO $pdo, int $numeroFicha): array {
         $sql = "
@@ -175,7 +201,10 @@ if (!function_exists('recalcularMetricasFicha')) {
 // PROCESAMIENTO DE PETICIÓN
 // ─────────────────────────────────────────────────────────────────────────────
 
-if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
+    if (php_sapi_name() === 'cli' && empty($_FILES)) {
+        return;
+    }
     echo json_encode(['success' => false, 'message' => 'Método no permitido. Use POST.']);
     return;
 }
@@ -246,13 +275,21 @@ try {
             }
 
             if (preg_match('/FECHA\s+DEL\s+REPORTE/i', $cellText) && $meta['fecha_reporte'] === null) {
-                $meta['fecha_reporte'] = parseFechaCorte($nextVal);
+                $meta['fecha_reporte'] = parseFechaCorte($nextVal) ?: parseFechaCorte($cellText);
             }
             if (preg_match('/FICHA\s+DE\s+CARACTERIZACI[OÓ]N/i', $cellText) && !preg_match('/ESTADO/i', $cellText) && $meta['ficha'] === null) {
-                $meta['ficha'] = preg_replace('/[^0-9]/', '', $nextVal);
+                if (preg_match('/FICHA\s+DE\s+CARACTERIZACI[OÓ]N[:\s]*(\d+)/i', $cellText, $mF)) {
+                    $meta['ficha'] = normalizarNumeroFicha($mF[1]);
+                } else {
+                    $meta['ficha'] = normalizarNumeroFicha($nextVal);
+                }
             }
             if (preg_match('/C[OÓ][DG]IGO/i', $cellText) && $meta['cod_programa'] === null) {
-                $meta['cod_programa'] = preg_replace('/[^0-9]/', '', $nextVal);
+                if (preg_match('/C[OÓ][DG]IGO[:\s]*(\d+)/i', $cellText, $mC)) {
+                    $meta['cod_programa'] = normalizarNumeroFicha($mC[1]);
+                } else {
+                    $meta['cod_programa'] = normalizarNumeroFicha($nextVal);
+                }
             }
             if (preg_match('/VERSI[OÓ]N/i', $cellText) && $meta['version'] === null) {
                 $meta['version'] = $nextVal;
@@ -470,8 +507,10 @@ try {
     $cache_aprendices_db = [];
     $res_ap = $pdo->query("SELECT numero_documento, numero_ficha, id_estado, nombres, apellidos FROM aprendices")->fetchAll(PDO::FETCH_ASSOC);
     foreach ($res_ap as $row_ap) {
-        $cache_aprendices_db[$row_ap['numero_documento']] = [
-            'numero_ficha' => (int)$row_ap['numero_ficha'],
+        $docNorm = normalizarDocumentoAprendiz($row_ap['numero_documento']);
+        $cache_aprendices_db[$docNorm] = [
+            'raw_doc'      => $row_ap['numero_documento'],
+            'numero_ficha' => normalizarNumeroFicha($row_ap['numero_ficha']),
             'id_estado'    => (int)$row_ap['id_estado'],
             'nombres'      => $row_ap['nombres'],
             'apellidos'    => $row_ap['apellidos'],
@@ -490,7 +529,7 @@ try {
     ");
     $stmt_mat_ficha->execute([$ficha]);
     while ($mRow = $stmt_mat_ficha->fetch(PDO::FETCH_ASSOC)) {
-        $doc = $mRow['num_documento_aprendiz'];
+        $doc = normalizarDocumentoAprendiz($mRow['num_documento_aprendiz']);
         $res = (int)$mRow['codigo_resul'];
         $cache_matriculas[$doc][$res] = [
             'id'            => (int)$mRow['id'],
@@ -554,7 +593,7 @@ try {
     for ($i = $headerRowIndex + 1; $i < count($rows); $i++) {
         $data = $rows[$i];
 
-        $num_doc = preg_replace('/[^0-9A-Za-z]/', '', getCol($data, $colMap, 'num_doc'));
+        $num_doc = normalizarDocumentoAprendiz(getCol($data, $colMap, 'num_doc'));
         if (empty($num_doc)) continue;
 
         $contadores['total']++;
@@ -574,28 +613,37 @@ try {
             $estado_id = $cache_estados[$estado_nombre];
         }
 
+        $ficha_archivo_norm = normalizarNumeroFicha($ficha);
+
         // 11.B. Protección de Aprendices contra reasignación
         if (isset($cache_aprendices_db[$num_doc])) {
             $appDb = $cache_aprendices_db[$num_doc];
-            if ($appDb['numero_ficha'] !== $ficha) {
+            $ficha_db_norm = normalizarNumeroFicha($appDb['numero_ficha']);
+
+            // Solo existe conflicto real si la ficha en BD existe, la ficha del archivo existe, y NO son iguales
+            // El estado del aprendiz (activo, retirado, cancelado, etc.) NO determina conflicto de pertenencia
+            if ($ficha_db_norm !== '' && $ficha_archivo_norm !== '' && $ficha_db_norm !== $ficha_archivo_norm) {
                 $contadores['conflictos']++;
                 if (!isset($aprendicesConflictoRegistrados[$num_doc])) {
-                    $advertencias[] = "El aprendiz $num_doc pertenece a otra ficha ({$appDb['numero_ficha']}) y no fue reasignado.";
+                    $advertencias[] = "El aprendiz $num_doc pertenece a otra ficha ($ficha_db_norm) y no fue reasignado.";
                     $aprendicesConflictoRegistrados[$num_doc] = true;
                 }
                 continue; // No procesar juicios para este aprendiz en esta ficha
             } else {
+                // Misma ficha: actualizar datos personales o estado si cambiaron
+                $rawDocTarget = $appDb['raw_doc'] ?? $num_doc;
                 if ($appDb['nombres'] !== $nombres || $appDb['apellidos'] !== $apellidos || $appDb['id_estado'] !== $estado_id) {
-                    $stmt_upd_aprendiz->execute([$tipo_doc, $nombres, $apellidos, $estado_id, $num_doc]);
+                    $stmt_upd_aprendiz->execute([$tipo_doc, $nombres, $apellidos, $estado_id, $rawDocTarget]);
                     $cache_aprendices_db[$num_doc]['nombres'] = $nombres;
                     $cache_aprendices_db[$num_doc]['apellidos'] = $apellidos;
                     $cache_aprendices_db[$num_doc]['id_estado'] = $estado_id;
                 }
             }
         } else {
-            $stmt_ins_aprendiz->execute([$num_doc, $tipo_doc, $nombres, $apellidos, $estado_id, $ficha]);
+            $stmt_ins_aprendiz->execute([$num_doc, $tipo_doc, $nombres, $apellidos, $estado_id, (int)$ficha]);
             $cache_aprendices_db[$num_doc] = [
-                'numero_ficha' => $ficha,
+                'raw_doc'      => $num_doc,
+                'numero_ficha' => $ficha_archivo_norm,
                 'id_estado'    => $estado_id,
                 'nombres'      => $nombres,
                 'apellidos'    => $apellidos

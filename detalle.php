@@ -30,6 +30,14 @@ $stmt_detalles = $pdo->prepare("SELECT c.nombre_comp, r.nombre_resultado, jc.des
 $stmt_detalles->execute([':doc' => $documento]);
 $detalles = $stmt_detalles->fetchAll(PDO::FETCH_ASSOC);
 
+$from = $_GET['from'] ?? 'aprendices.php';
+$returnParams = [];
+if (!empty($_GET['ficha'])) $returnParams['ficha'] = $_GET['ficha'];
+if (!empty($_GET['estado'])) $returnParams['estado'] = $_GET['estado'];
+if (!empty($_GET['juicio'])) $returnParams['juicio'] = $_GET['juicio'];
+if (!empty($_GET['search'])) $returnParams['search'] = $_GET['search'];
+$defaultReturnUrl = htmlspecialchars($from . (!empty($returnParams) ? '?' . http_build_query($returnParams) : ''));
+
 ?>
 <!DOCTYPE html>
 <html lang="es">
@@ -66,7 +74,7 @@ $detalles = $stmt_detalles->fetchAll(PDO::FETCH_ASSOC);
     <main class="main-content">
         <header class="topbar">
             <h1>Perfil del Aprendiz</h1>
-            <a href="aprendices.php" class="btn btn-outline"><i data-lucide="arrow-left"></i> Volver</a>
+            <a href="<?= $defaultReturnUrl ?>" id="btnVolver" class="btn btn-outline"><i data-lucide="arrow-left"></i> Volver</a>
         </header>
 
         <div class="container">
@@ -278,6 +286,31 @@ $avance_aprendiz = $total_evaluaciones > 0 ? round(($total_aprobados / $total_ev
 
     // Inicializar tabla
     renderTable();
+
+    // Gestión del botón Volver para preservar el contexto de filtros
+    (function initBotonVolver() {
+        const btn = document.getElementById('btnVolver');
+        if (!btn) return;
+
+        let ctx = null;
+        try {
+            const raw = sessionStorage.getItem('sgje_nav_context');
+            if (raw) ctx = JSON.parse(raw);
+        } catch(_) {}
+
+        if (ctx && ctx.seccionOrigen) {
+            const params = new URLSearchParams();
+            if (ctx.ficha) params.set('ficha', ctx.ficha);
+            if (ctx.estado) params.set('estado', ctx.estado);
+            if (ctx.juicio) params.set('juicio', ctx.juicio);
+            if (ctx.competencia) params.set('competencia', ctx.competencia);
+            if (ctx.busqueda || ctx.search) params.set('search', ctx.busqueda || ctx.search);
+
+            const queryString = params.toString();
+            const target = ctx.seccionOrigen + (queryString ? '?' + queryString : '');
+            btn.href = target;
+        }
+    })();
     </script>
 </body>
 </html>
