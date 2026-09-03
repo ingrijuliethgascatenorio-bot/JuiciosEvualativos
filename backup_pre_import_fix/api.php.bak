@@ -66,12 +66,11 @@ if ($action === 'get_dashboard') {
 
     // 1. Total Aprendices
     $stmt = $pdo->prepare("SELECT COUNT(DISTINCT a.numero_documento) as total FROM aprendices a 
-                           JOIN fichas f ON a.numero_ficha = f.numero_ficha
                            LEFT JOIN estados e ON a.id_estado = e.id_estado 
                            LEFT JOIN matricula_resultados mr ON a.numero_documento = mr.num_documento_aprendiz
                            LEFT JOIN juicios_catalogo jc ON mr.id_juicio_cat = jc.id_juicio_cat
                            LEFT JOIN resultados r ON mr.codigo_resul = r.codigo_resul
-                           LEFT JOIN competencias c ON r.codigo_comp = c.codigo_comp AND c.codigo_programa = f.codigo_programa
+                           LEFT JOIN competencias c ON r.codigo_comp = c.codigo_comp
                            $whereClause");
     $stmt->execute($params);
     $totalAprendices = $stmt->fetch(PDO::FETCH_ASSOC)['total'];
@@ -79,11 +78,10 @@ if ($action === 'get_dashboard') {
     // 2. Juicios Aprobados
     $stmt2 = $pdo->prepare("SELECT COUNT(*) as total FROM matricula_resultados mr
                             JOIN aprendices a ON mr.num_documento_aprendiz = a.numero_documento
-                            JOIN fichas f ON a.numero_ficha = f.numero_ficha
                             LEFT JOIN estados e ON a.id_estado = e.id_estado
                             JOIN juicios_catalogo jc ON mr.id_juicio_cat = jc.id_juicio_cat
-                            JOIN resultados r ON mr.codigo_resul = r.codigo_resul
-                            JOIN competencias c ON r.codigo_comp = c.codigo_comp AND c.codigo_programa = f.codigo_programa
+                            LEFT JOIN resultados r ON mr.codigo_resul = r.codigo_resul
+                            LEFT JOIN competencias c ON r.codigo_comp = c.codigo_comp
                             $whereClause " . ($whereClause ? "AND jc.descripcion = 'APROBADO'" : "WHERE jc.descripcion = 'APROBADO'"));
     $stmt2->execute($params);
     $juiciosAprobados = $stmt2->fetch(PDO::FETCH_ASSOC)['total'];
@@ -91,11 +89,10 @@ if ($action === 'get_dashboard') {
     // 3. Juicios Por Evaluar
     $stmt3 = $pdo->prepare("SELECT COUNT(*) as total FROM matricula_resultados mr
                             JOIN aprendices a ON mr.num_documento_aprendiz = a.numero_documento
-                            JOIN fichas f ON a.numero_ficha = f.numero_ficha
                             LEFT JOIN estados e ON a.id_estado = e.id_estado
                             JOIN juicios_catalogo jc ON mr.id_juicio_cat = jc.id_juicio_cat
-                            JOIN resultados r ON mr.codigo_resul = r.codigo_resul
-                            JOIN competencias c ON r.codigo_comp = c.codigo_comp AND c.codigo_programa = f.codigo_programa
+                            LEFT JOIN resultados r ON mr.codigo_resul = r.codigo_resul
+                            LEFT JOIN competencias c ON r.codigo_comp = c.codigo_comp
                             $whereClause " . ($whereClause ? "AND jc.descripcion = 'POR EVALUAR'" : "WHERE jc.descripcion = 'POR EVALUAR'"));
     $stmt3->execute($params);
     $juiciosPorEvaluar = $stmt3->fetch(PDO::FETCH_ASSOC)['total'];
@@ -122,11 +119,10 @@ if ($action === 'get_dashboard') {
                                    a.numero_documento, a.nombres, a.apellidos, a.numero_ficha, e.nombre as estado, 
                                    c.nombre_comp, r.nombre_resultado, jc.descripcion as juicio
                             FROM aprendices a
-                            JOIN fichas f ON a.numero_ficha = f.numero_ficha
                             JOIN estados e ON a.id_estado = e.id_estado
                             LEFT JOIN matricula_resultados mr ON a.numero_documento = mr.num_documento_aprendiz
                             LEFT JOIN resultados r ON mr.codigo_resul = r.codigo_resul
-                            LEFT JOIN competencias c ON r.codigo_comp = c.codigo_comp AND c.codigo_programa = f.codigo_programa
+                            LEFT JOIN competencias c ON r.codigo_comp = c.codigo_comp
                             LEFT JOIN juicios_catalogo jc ON mr.id_juicio_cat = jc.id_juicio_cat
                             $whereClause 
                             ORDER BY a.numero_documento, c.nombre_comp 
@@ -148,7 +144,7 @@ if ($action === 'get_dashboard') {
 if ($action === 'get_project_analysis') {
     $ficha = $_GET['ficha'] ?? '';
 
-    $where = [ESTADOS_INACTIVOS_SQL];
+    $where = [];
     $params = [];
 
     if ($ficha !== '') {
@@ -178,7 +174,6 @@ if ($action === 'get_project_analysis') {
             JOIN resultados r ON c.codigo_comp = r.codigo_comp
             JOIN fichas f ON f.codigo_programa = c.codigo_programa
             JOIN aprendices a ON a.numero_ficha = f.numero_ficha
-            JOIN estados e ON a.id_estado = e.id_estado
             LEFT JOIN matricula_resultados mr ON mr.codigo_resul = r.codigo_resul AND mr.num_documento_aprendiz = a.numero_documento
             LEFT JOIN juicios_catalogo jc ON mr.id_juicio_cat = jc.id_juicio_cat
             $whereClause

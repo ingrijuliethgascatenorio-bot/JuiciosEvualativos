@@ -87,18 +87,15 @@ function getRiesgoAcademico(PDO $pdo, string $ficha): array {
                 WHEN COUNT(mr.id) = 0 THEN 0
                 ELSE ROUND(
                     (COUNT(mr.id) FILTER (WHERE jc.descripcion = 'APROBADO')::numeric
-                    / COUNT(mr.id)) * 100, 2
+                    / COUNT(mr.id)) * 100, 1
                 )
             END AS porcentaje_avance
         FROM aprendices a
-        JOIN fichas f ON a.numero_ficha = f.numero_ficha
         JOIN estados e ON a.id_estado = e.id_estado
         LEFT JOIN matricula_resultados mr
                ON mr.num_documento_aprendiz = a.numero_documento
         LEFT JOIN juicios_catalogo jc
                ON jc.id_juicio_cat = mr.id_juicio_cat
-        LEFT JOIN resultados r ON mr.codigo_resul = r.codigo_resul
-        LEFT JOIN competencias c ON r.codigo_comp = c.codigo_comp AND c.codigo_programa = f.codigo_programa
         $where
         GROUP BY a.numero_documento, a.nombres, a.apellidos, a.numero_ficha
         ORDER BY pendientes DESC, porcentaje_avance ASC
@@ -151,18 +148,15 @@ function getRanking(PDO $pdo, string $ficha): array {
                 WHEN COUNT(mr.id) = 0 THEN 0
                 ELSE ROUND(
                     (COUNT(mr.id) FILTER (WHERE jc.descripcion = 'APROBADO')::numeric
-                    / COUNT(mr.id)) * 100, 2
+                    / COUNT(mr.id)) * 100, 1
                 )
             END AS porcentaje_avance
         FROM aprendices a
-        JOIN fichas f ON a.numero_ficha = f.numero_ficha
         JOIN estados e ON a.id_estado = e.id_estado
         LEFT JOIN matricula_resultados mr
                ON mr.num_documento_aprendiz = a.numero_documento
         LEFT JOIN juicios_catalogo jc
                ON jc.id_juicio_cat = mr.id_juicio_cat
-        LEFT JOIN resultados r ON mr.codigo_resul = r.codigo_resul
-        LEFT JOIN competencias c ON r.codigo_comp = c.codigo_comp AND c.codigo_programa = f.codigo_programa
         $where
         GROUP BY a.numero_documento, a.nombres, a.apellidos, a.numero_ficha
         ORDER BY porcentaje_avance DESC, aprobados DESC
@@ -216,16 +210,16 @@ function getSemaforoCompetencias(PDO $pdo, string $ficha): array {
                 WHEN COUNT(mr.id) = 0 THEN 0
                 ELSE ROUND(
                     (COUNT(mr.id) FILTER (WHERE jc.descripcion = 'APROBADO')::numeric
-                    / COUNT(mr.id)) * 100, 2
+                    / COUNT(mr.id)) * 100, 1
                 )
             END AS porcentaje_aprobacion
         FROM competencias c
-        JOIN fichas f ON f.codigo_programa = c.codigo_programa
         JOIN resultados r ON r.codigo_comp = c.codigo_comp
-        LEFT JOIN aprendices a ON a.numero_ficha = f.numero_ficha
+        LEFT JOIN matricula_resultados mr ON mr.codigo_resul = r.codigo_resul
+        LEFT JOIN aprendices a  ON a.numero_documento = mr.num_documento_aprendiz
         LEFT JOIN estados e ON e.id_estado = a.id_estado
-        LEFT JOIN matricula_resultados mr ON mr.codigo_resul = r.codigo_resul AND mr.num_documento_aprendiz = a.numero_documento
         LEFT JOIN juicios_catalogo jc ON jc.id_juicio_cat = mr.id_juicio_cat
+        LEFT JOIN fichas f ON f.numero_ficha = a.numero_ficha
         $whereClause
         GROUP BY c.codigo_comp, c.nombre_comp
         ORDER BY porcentaje_aprobacion ASC
@@ -359,7 +353,7 @@ function getEstadisticasFicha(PDO $pdo, string $ficha): array {
                 WHEN COUNT(mr.id) = 0 THEN 0
                 ELSE ROUND(
                     (COUNT(mr.id) FILTER (WHERE jc.descripcion = 'APROBADO')::numeric
-                    / COUNT(mr.id)) * 100, 2
+                    / COUNT(mr.id)) * 100, 1
                 )
             END AS porcentaje_avance,
             CASE
@@ -367,19 +361,16 @@ function getEstadisticasFicha(PDO $pdo, string $ficha): array {
                 ELSE ROUND(
                     (COUNT(DISTINCT CASE WHEN jc.descripcion = 'APROBADO'
                         THEN a.numero_documento END)::numeric
-                    / COUNT(DISTINCT a.numero_documento)) * 100, 2
+                    / COUNT(DISTINCT a.numero_documento)) * 100, 1
                 )
             END AS porcentaje_aprobacion
         FROM fichas f
         JOIN programas p ON p.codigo_programa = f.codigo_programa
         JOIN aprendices a ON a.numero_ficha = f.numero_ficha
         JOIN estados e ON e.id_estado = a.id_estado
-        LEFT JOIN (
-            matricula_resultados mr
-            JOIN juicios_catalogo jc ON jc.id_juicio_cat = mr.id_juicio_cat
-            JOIN resultados r ON mr.codigo_resul = r.codigo_resul
-            JOIN competencias c ON r.codigo_comp = c.codigo_comp
-        ) ON mr.num_documento_aprendiz = a.numero_documento AND c.codigo_programa = f.codigo_programa
+        LEFT JOIN matricula_resultados mr
+               ON mr.num_documento_aprendiz = a.numero_documento
+        LEFT JOIN juicios_catalogo jc ON jc.id_juicio_cat = mr.id_juicio_cat
         $whereClause
         GROUP BY f.numero_ficha, p.nombre_programa
         ORDER BY f.numero_ficha
