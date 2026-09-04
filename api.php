@@ -301,16 +301,24 @@ if ($action === 'get_all_aprendices') {
 
     $whereClause = count($where) > 0 ? "WHERE " . implode(" AND ", $where) : "";
 
-    $sql = "SELECT a.numero_documento, a.nombres, a.apellidos, a.numero_ficha, e.nombre as estado,
-                   (SELECT COUNT(*) FROM matricula_resultados mr2 
-                    JOIN juicios_catalogo jc2 ON mr2.id_juicio_cat = jc2.id_juicio_cat 
-                    WHERE mr2.num_documento_aprendiz = a.numero_documento AND jc2.descripcion = 'APROBADO') as aprobados,
-                   (SELECT COUNT(*) FROM matricula_resultados mr3 
-                    WHERE mr3.num_documento_aprendiz = a.numero_documento) as total
-            FROM aprendices a
-            JOIN estados e ON a.id_estado = e.id_estado
-            $whereClause
-            ORDER BY a.nombres ASC";
+    $sql = "SELECT * FROM (
+                SELECT DISTINCT ON (a.numero_documento) 
+                       a.numero_documento, a.nombres, a.apellidos, a.numero_ficha, e.nombre as estado,
+                       (SELECT COUNT(*) FROM matricula_resultados mr2 
+                        JOIN juicios_catalogo jc2 ON mr2.id_juicio_cat = jc2.id_juicio_cat 
+                        WHERE mr2.num_documento_aprendiz = a.numero_documento AND jc2.descripcion = 'APROBADO') as aprobados,
+                       (SELECT COUNT(*) FROM matricula_resultados mr3 
+                        WHERE mr3.num_documento_aprendiz = a.numero_documento) as total
+                FROM aprendices a
+                JOIN estados e ON a.id_estado = e.id_estado
+                LEFT JOIN matricula_resultados mr ON mr.num_documento_aprendiz = a.numero_documento
+                LEFT JOIN juicios_catalogo jc ON jc.id_juicio_cat = mr.id_juicio_cat
+                LEFT JOIN resultados r ON mr.codigo_resul = r.codigo_resul
+                LEFT JOIN competencias c ON r.codigo_comp = c.codigo_comp
+                $whereClause
+                ORDER BY a.numero_documento
+            ) sub
+            ORDER BY sub.nombres ASC";
     
     $stmt = $pdo->prepare($sql);
     $stmt->execute($params);

@@ -209,6 +209,7 @@
                     currentPage = 1;
                     renderTable();
                 } catch(e) {
+                    console.error('Error cargando aprendices:', e);
                     tableBody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: #ef4444;">Error al cargar datos</td></tr>';
                 }
             }
