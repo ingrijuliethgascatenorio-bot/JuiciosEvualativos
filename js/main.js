@@ -3,39 +3,6 @@
  * Gestiona la carga de datos, gráficas y paginación de la tabla principal.
  */
 
-// ── Constantes y Contexto Global (REGLA 3) ──────────────────────────────────
-const CONTEXTO_CORTE_KEY = 'sgje_contexto_corte';
-
-function guardarContextoCorte(ficha, fecha_reporte, seccionOrigen = 'index.php') {
-    try {
-        const payload = {
-            ficha: ficha ? String(ficha) : '',
-            fecha_reporte: fecha_reporte ? String(fecha_reporte) : '',
-            seccionOrigen: seccionOrigen
-        };
-        sessionStorage.setItem(CONTEXTO_CORTE_KEY, JSON.stringify(payload));
-    } catch (e) {
-        console.warn('No se pudo guardar contexto en sessionStorage:', e);
-    }
-}
-
-function obtenerContextoCorte() {
-    try {
-        const raw = sessionStorage.getItem(CONTEXTO_CORTE_KEY);
-        if (raw) return JSON.parse(raw);
-    } catch (e) {
-        console.warn('No se pudo leer contexto de sessionStorage:', e);
-    }
-    return null;
-}
-
-function guardarContextoDashboard() {
-    const fVal = document.getElementById('ficha')?.value || '';
-    const fechaVal = document.getElementById('fecha_reporte')?.value || '';
-    guardarContextoCorte(fVal, fechaVal, 'index.php');
-}
-window.guardarContextoDashboard = guardarContextoDashboard;
-
 document.addEventListener('DOMContentLoaded', () => {
 
     // ── Referencias DOM ───────────────────────────────────────────────────────
@@ -54,6 +21,8 @@ document.addEventListener('DOMContentLoaded', () => {
     let currentPage = 1;
 
     // ═════════════════════════════════════════════════════════════════════════
+    // CARGA PRINCIPAL
+    // ═════════════════════════════════════════════════════════════════════════
     // FORMATO DE FECHA
     // ═════════════════════════════════════════════════════════════════════════
     function formatDateDisplay(dateStr) {
@@ -69,8 +38,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     let fichaActualCargada = null;
 
-    // ── Carga de Fichas en Select ─────────────────────────────────────────────
-    async function loadFichasSelect() {
+    async function loadFichas() {
         const fSelect = document.getElementById('ficha');
         if (!fSelect) return;
         try {
@@ -86,35 +54,27 @@ document.addEventListener('DOMContentLoaded', () => {
                 });
             }
         } catch (err) {
-            console.error('Error cargando lista de fichas:', err);
+            console.error('Error cargando fichas:', err);
         }
     }
 
-    // ── Carga y actualización de cortes de ficha ──────────────────────────────
     async function actualizarFechasFicha(ficha, valorSeleccionado = '') {
         const fechaSelect = document.getElementById('fecha_reporte');
-        if (!fechaSelect) return '';
+        if (!fechaSelect) return;
 
-        // REGLA 1: Si no hay ficha seleccionada, deshabilitar y mostrar mensaje claro
+        fechaSelect.innerHTML = '';
+
         if (!ficha) {
-            fichaActualCargada = '';
-            fechaSelect.disabled = true;
-            fechaSelect.innerHTML = '<option value="">Seleccione una ficha para consultar los cortes</option>';
-            return '';
+            fichaActualCargada = null;
+            fechaSelect.innerHTML = '<option value="">Seleccione una ficha</option>';
+            return;
         }
-
-        // Deshabilitar temporalmente mientras carga (REGLA 5)
-        fechaSelect.disabled = true;
-        fechaSelect.innerHTML = '<option value="">Cargando cortes...</option>';
 
         try {
             const res = await fetch(`api.php?action=get_fechas_ficha&ficha=${encodeURIComponent(ficha)}`);
             const cortes = await res.json();
             if (Array.isArray(cortes) && cortes.length > 0) {
-                fechaSelect.innerHTML = '';
-                const fechaExiste = valorSeleccionado && cortes.some(c => c.fecha_reporte === valorSeleccionado);
-                const fechaElegida = fechaExiste ? valorSeleccionado : cortes[0].fecha_reporte;
-
+                let seleccionadoValido = false;
                 cortes.forEach((c, idx) => {
                     const opt = document.createElement('option');
                     opt.value = c.fecha_reporte;
@@ -122,35 +82,52 @@ document.addEventListener('DOMContentLoaded', () => {
                         ? `${formatDateDisplay(c.fecha_reporte)} — Último corte` 
                         : formatDateDisplay(c.fecha_reporte);
                     opt.textContent = etiqueta;
-                    if (c.fecha_reporte === fechaElegida) {
+                    if (valorSeleccionado && valorSeleccionado === c.fecha_reporte) {
                         opt.selected = true;
+                        seleccionadoValido = true;
                     }
                     fechaSelect.appendChild(opt);
                 });
 
-                fechaSelect.value = fechaElegida;
-                fechaSelect.disabled = false;
-                fichaActualCargada = ficha;
-                return fechaElegida;
+                // Si no se pasó un corte específico o no coincidió, seleccionar el primero (el más reciente)
+                if (!seleccionadoValido && fechaSelect.options.length > 0) {
+                    fechaSelect.options[0].selected = true;
+                }
             } else {
                 fechaSelect.innerHTML = '<option value="">Sin cortes registrados</option>';
-                fechaSelect.disabled = true;
-                fichaActualCargada = ficha;
-                return '';
             }
+            fichaActualCargada = ficha;
         } catch (err) {
             console.error('Error cargando fechas de ficha:', err);
-            fechaSelect.innerHTML = '<option value="">Error al cargar cortes</option>';
-            fechaSelect.disabled = true;
-            fichaActualCargada = ficha;
-            return '';
+            fechaSelect.innerHTML = '<option value="">Error cargando fechas</option>';
         }
     }
+
+    function guardarContextoDashboard() {
+        const ficha = document.getElementById('ficha')?.value || '';
+        const fecha_reporte = document.getElementById('fecha_reporte')?.value || '';
+        const estado = document.getElementById('estado')?.value || '';
+        const juicio = document.getElementById('juicio')?.value || '';
+        const ctx = {
+            seccionOrigen: 'index.php',
+            ficha,
+            fecha_reporte,
+            estado,
+            juicio
+        };
+        sessionStorage.setItem('sgje_nav_context', JSON.stringify(ctx));
+        return ctx;
+    }
+    window.guardarContextoDashboard = guardarContextoDashboard;
 
     // ═════════════════════════════════════════════════════════════════════════
     // CARGA PRINCIPAL
     // ═════════════════════════════════════════════════════════════════════════
     async function loadDashboardData() {
+        if (filtersForm) {
+            guardarContextoDashboard();
+        }
+
         const params = filtersForm
             ? new URLSearchParams(new FormData(filtersForm)).toString()
             : '';
@@ -169,6 +146,52 @@ document.addEventListener('DOMContentLoaded', () => {
         } catch (err) {
             console.error('Error cargando dashboard:', err);
         }
+    }
+
+    async function initDashboard() {
+        await loadFichas();
+
+        const urlParams = new URLSearchParams(window.location.search);
+        let f = urlParams.get('ficha');
+        let fecha = urlParams.get('fecha_reporte');
+        let e = urlParams.get('estado');
+        let j = urlParams.get('juicio');
+
+        if (!f && !fecha && !e && !j) {
+            try {
+                const raw = sessionStorage.getItem('sgje_nav_context');
+                if (raw) {
+                    const ctx = JSON.parse(raw);
+                    f = ctx.ficha || '';
+                    fecha = ctx.fecha_reporte || '';
+                    e = ctx.estado || '';
+                    j = ctx.juicio || '';
+                }
+            } catch (_) {}
+        }
+
+        const fSelect = document.getElementById('ficha');
+        const fechaSelect = document.getElementById('fecha_reporte');
+        const eSelect = document.getElementById('estado');
+        const jSelect = document.getElementById('juicio');
+
+        if (f && fSelect) {
+            if (!Array.from(fSelect.options).some(o => o.value === f)) {
+                const opt = document.createElement('option');
+                opt.value = f;
+                opt.textContent = `Ficha ${f}`;
+                fSelect.appendChild(opt);
+            }
+            fSelect.value = f;
+            await actualizarFechasFicha(f, fecha || '');
+        } else if (fSelect && fSelect.options.length > 1) {
+            if (fechaSelect) fechaSelect.innerHTML = '<option value="">Seleccione una ficha</option>';
+        }
+
+        if (e && eSelect) eSelect.value = e;
+        if (j && jSelect) jSelect.value = j;
+
+        await loadDashboardData();
     }
 
     // ═════════════════════════════════════════════════════════════════════════
@@ -380,39 +403,26 @@ document.addEventListener('DOMContentLoaded', () => {
     // EVENTOS
     // ═════════════════════════════════════════════════════════════════════════
     if (filtersForm) {
-        filtersForm.addEventListener('submit', async e => {
+        filtersForm.addEventListener('submit', e => {
             e.preventDefault();
-            const fVal = document.getElementById('ficha')?.value || '';
-            const fechaVal = document.getElementById('fecha_reporte')?.value || '';
-            guardarContextoCorte(fVal, fechaVal, 'index.php');
             currentPage = 1;
-            await loadDashboardData();
+            loadDashboardData();
         });
 
         const fInput = document.getElementById('ficha');
         if (fInput) {
             fInput.addEventListener('change', async () => {
-                const fichaVal = fInput.value;
-                const fechaSelect = document.getElementById('fecha_reporte');
-                if (fechaSelect) {
-                    fechaSelect.disabled = true;
-                    fechaSelect.innerHTML = '<option value="">Cargando cortes...</option>';
-                }
-                // REGLA 5: await antes de guardar y cargar datos
-                const fechaSeleccionada = await actualizarFechasFicha(fichaVal);
-                guardarContextoCorte(fichaVal, fechaSeleccionada || '', 'index.php');
+                await actualizarFechasFicha(fInput.value);
                 currentPage = 1;
-                await loadDashboardData();
+                loadDashboardData();
             });
         }
 
         const fechaSelect = document.getElementById('fecha_reporte');
         if (fechaSelect) {
-            fechaSelect.addEventListener('change', async () => {
-                const fVal = document.getElementById('ficha')?.value || '';
-                guardarContextoCorte(fVal, fechaSelect.value, 'index.php');
+            fechaSelect.addEventListener('change', () => {
                 currentPage = 1;
-                await loadDashboardData();
+                loadDashboardData();
             });
         }
     }
@@ -514,51 +524,6 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    // ── Inicialización con Prioridad de Contexto (REGLA 4) ────────────────────
-    async function init() {
-        await loadFichasSelect();
-
-        const urlParams = new URLSearchParams(window.location.search);
-        const ctx = obtenerContextoCorte();
-
-        const fInput = document.getElementById('ficha');
-        const eInput = document.getElementById('estado');
-        const jInput = document.getElementById('juicio');
-
-        // Prioridad 1: URL -> Prioridad 2: sessionStorage
-        let fichaInicial = '';
-        if (urlParams.has('ficha')) {
-            fichaInicial = urlParams.get('ficha') || '';
-        } else if (ctx && ctx.ficha) {
-            fichaInicial = ctx.ficha;
-        }
-
-        let fechaInicial = '';
-        if (urlParams.has('fecha_reporte')) {
-            fechaInicial = urlParams.get('fecha_reporte') || '';
-        } else if (ctx && ctx.fecha_reporte && (!fichaInicial || ctx.ficha === fichaInicial)) {
-            fechaInicial = ctx.fecha_reporte;
-        }
-
-        if (urlParams.has('estado') && eInput) eInput.value = urlParams.get('estado');
-        if (urlParams.has('juicio') && jInput) jInput.value = urlParams.get('juicio');
-
-        if (fichaInicial && fInput) {
-            if (!Array.from(fInput.options).some(o => o.value === String(fichaInicial))) {
-                const opt = document.createElement('option');
-                opt.value = fichaInicial;
-                opt.textContent = `Ficha ${fichaInicial}`;
-                fInput.appendChild(opt);
-            }
-            fInput.value = fichaInicial;
-            const fechaCargada = await actualizarFechasFicha(fichaInicial, fechaInicial);
-            guardarContextoCorte(fichaInicial, fechaCargada || '', 'index.php');
-        } else {
-            await actualizarFechasFicha('');
-        }
-
-        await loadDashboardData();
-    }
-
-    init();
+    // ── Inicio ────────────────────────────────────────────────────────────────
+    initDashboard();
 });

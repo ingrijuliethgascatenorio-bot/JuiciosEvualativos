@@ -1,22 +1,11 @@
 <?php
 require 'db.php';
 
-header('Content-Type: application/json');
+if (!headers_sent()) {
+    header('Content-Type: application/json');
+}
 
 $action = $_GET['action'] ?? 'get_dashboard';
-
-// Acciones que borran datos: requieren la clave admin definida en .env (ADMIN_TOKEN)
-$accionesProtegidas = ['delete_all', 'delete_ficha'];
-if (in_array($action, $accionesProtegidas, true)) {
-    $tokenEsperado = $env['ADMIN_TOKEN'] ?? '';
-    $tokenRecibido = $_GET['token'] ?? ($_SERVER['HTTP_X_ADMIN_TOKEN'] ?? '');
-
-    if ($tokenEsperado === '' || !hash_equals($tokenEsperado, $tokenRecibido)) {
-        http_response_code(403);
-        echo json_encode(['success' => false, 'message' => 'No autorizado: falta o es incorrecta la clave de administrador.']);
-        exit;
-    }
-}
 
 // Estados que se excluyen de las estadísticas de avance (no del conteo por estado del chart)
 const ESTADOS_INACTIVOS_SQL = "e.nombre NOT IN ('RETIRO VOLUNTARIO', 'CANCELADO', 'TRASLADADO', 'APLAZADO')";
@@ -29,19 +18,14 @@ if ($action === 'get_fechas_ficha') {
     }
     try {
         $stmt = $pdo->prepare("
-            SELECT DISTINCT ON (fecha_reporte)
-                id AS id_importacion,
-                numero_ficha,
-                fecha_reporte,
-                fecha_importacion,
-                nombre_archivo
-            FROM historial_importaciones
-            WHERE numero_ficha = :ficha
-              AND estado = 'EXITOSO'
-            ORDER BY
-                fecha_reporte DESC,
-                fecha_importacion DESC,
-                id DESC
+            SELECT id as id_importacion, numero_ficha, fecha_reporte, fecha_importacion, nombre_archivo
+            FROM (
+                SELECT DISTINCT ON (fecha_reporte) id, numero_ficha, fecha_reporte, fecha_importacion, nombre_archivo
+                FROM historial_importaciones
+                WHERE numero_ficha = :ficha AND estado = 'EXITOSO'
+                ORDER BY fecha_reporte DESC, fecha_importacion DESC, id DESC
+            ) sub
+            ORDER BY fecha_reporte DESC
         ");
         $stmt->execute([':ficha' => (int)$ficha]);
         $fechas = $stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -321,14 +305,11 @@ if ($action === 'get_project_analysis') {
 if ($action === 'delete_all') {
     try {
         $pdo->beginTransaction();
-        $pdo->exec("DELETE FROM matricula_resultados");
         $pdo->exec("DELETE FROM corte_aprendices");
+        $pdo->exec("DELETE FROM matricula_resultados");
         $pdo->exec("DELETE FROM historial_importaciones");
         $pdo->exec("DELETE FROM aprendices");
         $pdo->exec("DELETE FROM fichas");
-        $pdo->exec("DELETE FROM resultados");
-        $pdo->exec("DELETE FROM competencias");
-        $pdo->exec("DELETE FROM programas");
         $pdo->commit();
         echo json_encode(['success' => true, 'message' => 'Toda la información ha sido eliminada correctamente.']);
     } catch (Exception $e) {
@@ -347,8 +328,8 @@ if ($action === 'delete_ficha') {
 
     try {
         $pdo->beginTransaction();
-        $pdo->prepare("DELETE FROM matricula_resultados WHERE numero_ficha = :ficha OR num_documento_aprendiz IN (SELECT numero_documento FROM aprendices WHERE numero_ficha = :ficha)")->execute([':ficha' => (int)$ficha]);
-        $pdo->prepare("DELETE FROM corte_aprendices WHERE id_importacion IN (SELECT id FROM historial_importaciones WHERE numero_ficha = :ficha)")->execute([':ficha' => (int)$ficha]);
+        $pdo->prepare("DELETE FROM corte_aprendices WHERE id_importacion IN (SELECT id FROM historial_importaciones WHERE numero_ficha = :ficha) OR numero_documento IN (SELECT numero_documento FROM aprendices WHERE numero_ficha = :ficha)")->execute([':ficha' => (int)$ficha]);
+        $pdo->prepare("DELETE FROM matricula_resultados WHERE numero_ficha = :ficha OR num_documento_aprendiz IN (SELECT numero_documento FROM aprendices WHERE numero_ficha = :ficha) OR id_importacion IN (SELECT id FROM historial_importaciones WHERE numero_ficha = :ficha)")->execute([':ficha' => (int)$ficha]);
         $pdo->prepare("DELETE FROM historial_importaciones WHERE numero_ficha = :ficha")->execute([':ficha' => (int)$ficha]);
         $pdo->prepare("DELETE FROM aprendices WHERE numero_ficha = :ficha")->execute([':ficha' => (int)$ficha]);
         $pdo->prepare("DELETE FROM fichas WHERE numero_ficha = :ficha")->execute([':ficha' => (int)$ficha]);

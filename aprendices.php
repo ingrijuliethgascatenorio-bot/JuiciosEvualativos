@@ -74,9 +74,9 @@
                             </div>
                         </div>
                         <div class="filter-group">
-                            <label>Corte / Fecha del reporte</label>
-                            <select id="fecha_reporte" name="fecha_reporte" class="filter-control" disabled>
-                                <option value="">Seleccione una ficha para consultar los cortes</option>
+                            <label>Corte / Fecha</label>
+                            <select id="fecha_reporte" name="fecha_reporte" class="filter-control">
+                                <option value="">Último corte disponible</option>
                             </select>
                         </div>
                         <div class="filter-group">
@@ -196,91 +196,37 @@
                 return dateStr;
             }
 
-            const CONTEXTO_CORTE_KEY = 'sgje_contexto_corte';
-
-            function guardarContextoCorte(ficha, fecha_reporte, seccionOrigen = 'aprendices.php') {
-                try {
-                    const payload = {
-                        ficha: ficha ? String(ficha) : '',
-                        fecha_reporte: fecha_reporte ? String(fecha_reporte) : '',
-                        seccionOrigen: seccionOrigen
-                    };
-                    sessionStorage.setItem(CONTEXTO_CORTE_KEY, JSON.stringify(payload));
-                    const estado = document.getElementById('estado')?.value || '';
-                    const juicio = document.getElementById('juicio')?.value || '';
-                    const search = document.getElementById('search')?.value || '';
-                    sessionStorage.setItem('sgje_nav_context', JSON.stringify({
-                        ...payload,
-                        estado,
-                        juicio,
-                        search,
-                        busqueda: search
-                    }));
-                } catch (e) {
-                    console.warn('No se pudo guardar contexto:', e);
-                }
-            }
-            window.guardarContextoAprendices = () => {
-                const f = document.getElementById('ficha')?.value || '';
-                const fec = document.getElementById('fecha_reporte')?.value || '';
-                guardarContextoCorte(f, fec, 'aprendices.php');
-            };
-
-            function obtenerContextoCorte() {
-                try {
-                    const raw = sessionStorage.getItem(CONTEXTO_CORTE_KEY);
-                    if (raw) return JSON.parse(raw);
-                    const nav = sessionStorage.getItem('sgje_nav_context');
-                    if (nav) return JSON.parse(nav);
-                } catch (e) {
-                    console.warn('No se pudo leer contexto:', e);
-                }
-                return null;
-            }
-
             async function actualizarFechasAprendices(ficha, seleccionada = '') {
                 const fechaSel = document.getElementById('fecha_reporte');
-                if (!fechaSel) return '';
-
+                if (!fechaSel) return;
+                fechaSel.innerHTML = '';
                 if (!ficha) {
-                    fechaSel.disabled = true;
-                    fechaSel.innerHTML = '<option value="">Seleccione una ficha para consultar los cortes</option>';
-                    return '';
+                    fechaSel.innerHTML = '<option value="">Seleccione una ficha</option>';
+                    return;
                 }
-
-                fechaSel.disabled = true;
-                fechaSel.innerHTML = '<option value="">Cargando cortes...</option>';
 
                 try {
                     const res = await fetch(`api.php?action=get_fechas_ficha&ficha=${encodeURIComponent(ficha)}`).then(r => r.json());
                     if (Array.isArray(res) && res.length > 0) {
-                        fechaSel.innerHTML = '';
-                        const fechaExiste = seleccionada && res.some(c => c.fecha_reporte === seleccionada);
-                        const fechaElegida = fechaExiste ? seleccionada : res[0].fecha_reporte;
-
+                        let seleccionadoValido = false;
                         res.forEach((c, idx) => {
                             const opt = document.createElement('option');
                             opt.value = c.fecha_reporte;
-                            opt.textContent = idx === 0 
-                                ? `${formatDateDisplay(c.fecha_reporte)} — Último corte` 
-                                : formatDateDisplay(c.fecha_reporte);
-                            if (c.fecha_reporte === fechaElegida) opt.selected = true;
+                            opt.textContent = idx === 0 ? `${formatDateDisplay(c.fecha_reporte)} — Último corte` : formatDateDisplay(c.fecha_reporte);
+                            if (seleccionada && seleccionada === c.fecha_reporte) {
+                                opt.selected = true;
+                                seleccionadoValido = true;
+                            }
                             fechaSel.appendChild(opt);
                         });
-
-                        fechaSel.value = fechaElegida;
-                        fechaSel.disabled = false;
-                        return fechaElegida;
+                        if (!seleccionadoValido && fechaSel.options.length > 0) {
+                            fechaSel.options[0].selected = true;
+                        }
                     } else {
                         fechaSel.innerHTML = '<option value="">Sin cortes registrados</option>';
-                        fechaSel.disabled = true;
-                        return '';
                     }
                 } catch(e) {
-                    console.error('Error cargando fechas:', e);
-                    fechaSel.innerHTML = '<option value="">Error al cargar cortes</option>';
-                    fechaSel.disabled = true;
-                    return '';
+                    fechaSel.innerHTML = '<option value="">Error cargando fechas</option>';
                 }
             }
 
@@ -319,7 +265,25 @@
                 }
             }
 
-            // Contexto gestionado en guardarContextoCorte()
+            function guardarContextoAprendices() {
+                const ficha = document.getElementById('ficha')?.value || '';
+                const fecha_reporte = document.getElementById('fecha_reporte')?.value || '';
+                const estado = document.getElementById('estado')?.value || '';
+                const juicio = document.getElementById('juicio')?.value || '';
+                const search = document.getElementById('search')?.value || '';
+                const ctx = {
+                    seccionOrigen: 'aprendices.php',
+                    ficha,
+                    fecha_reporte,
+                    estado,
+                    juicio,
+                    busqueda: search,
+                    search
+                };
+                sessionStorage.setItem('sgje_nav_context', JSON.stringify(ctx));
+                return ctx;
+            }
+            window.guardarContextoAprendices = guardarContextoAprendices;
 
             function renderTable() {
                 if(currentData.length === 0) {
@@ -415,43 +379,23 @@
             }
 
             const selectFichaEl = document.getElementById('ficha');
-            const selectFechaEl = document.getElementById('fecha_reporte');
-
             if (selectFichaEl) {
                 selectFichaEl.addEventListener('change', async () => {
-                    const fichaVal = selectFichaEl.value;
-                    if (selectFechaEl) {
-                        selectFechaEl.disabled = true;
-                        selectFechaEl.innerHTML = '<option value="">Cargando cortes...</option>';
-                    }
-                    const fechaRes = await actualizarFechasAprendices(fichaVal);
-                    guardarContextoCorte(fichaVal, fechaRes || '', 'aprendices.php');
-                    await fetchData();
-                });
-            }
-
-            if (selectFechaEl) {
-                selectFechaEl.addEventListener('change', async () => {
-                    const fVal = selectFichaEl ? selectFichaEl.value : '';
-                    guardarContextoCorte(fVal, selectFechaEl.value, 'aprendices.php');
-                    await fetchData();
+                    await actualizarFechasAprendices(selectFichaEl.value);
+                    guardarContextoAprendices();
+                    fetchData();
                 });
             }
 
             filtersForm.addEventListener('change', (e) => {
-                if (e.target && (e.target.id === 'ficha' || e.target.id === 'fecha_reporte')) return;
-                const fVal = selectFichaEl ? selectFichaEl.value : '';
-                const fecVal = selectFechaEl ? selectFechaEl.value : '';
-                guardarContextoCorte(fVal, fecVal, 'aprendices.php');
+                if (e.target && e.target.id === 'ficha') return;
+                guardarContextoAprendices();
                 fetchData();
             });
-
             document.getElementById('search').addEventListener('input', () => {
                 clearTimeout(this.st);
                 this.st = setTimeout(() => {
-                    const fVal = selectFichaEl ? selectFichaEl.value : '';
-                    const fecVal = selectFechaEl ? selectFechaEl.value : '';
-                    guardarContextoCorte(fVal, fecVal, 'aprendices.php');
+                    guardarContextoAprendices();
                     fetchData();
                 }, 400);
             });
@@ -460,25 +404,25 @@
                 await loadFichas();
 
                 const urlParams = new URLSearchParams(window.location.search);
-                const ctx = obtenerContextoCorte();
+                let f = urlParams.get('ficha');
+                let fecha = urlParams.get('fecha_reporte');
+                let e = urlParams.get('estado');
+                let j = urlParams.get('juicio');
+                let s = urlParams.get('search');
 
-                let f = '';
-                if (urlParams.has('ficha')) {
-                    f = urlParams.get('ficha') || '';
-                } else if (ctx && ctx.ficha) {
-                    f = ctx.ficha;
+                if (!f && !fecha && !e && !j && !s) {
+                    try {
+                        const raw = sessionStorage.getItem('sgje_nav_context');
+                        if (raw) {
+                            const ctx = JSON.parse(raw);
+                            f = ctx.ficha || '';
+                            fecha = ctx.fecha_reporte || '';
+                            e = ctx.estado || '';
+                            j = ctx.juicio || '';
+                            s = ctx.busqueda || ctx.search || '';
+                        }
+                    } catch(_) {}
                 }
-
-                let fecha = '';
-                if (urlParams.has('fecha_reporte')) {
-                    fecha = urlParams.get('fecha_reporte') || '';
-                } else if (ctx && ctx.fecha_reporte && (!f || ctx.ficha === f)) {
-                    fecha = ctx.fecha_reporte;
-                }
-
-                let e = urlParams.get('estado') || (ctx ? ctx.estado : '');
-                let j = urlParams.get('juicio') || (ctx ? ctx.juicio : '');
-                let s = urlParams.get('search') || (ctx ? (ctx.busqueda || ctx.search) : '');
 
                 const selectFicha = document.getElementById('ficha');
                 const selectEstado = document.getElementById('estado');
@@ -486,23 +430,23 @@
                 const inputSearch = document.getElementById('search');
 
                 if (f && selectFicha) {
-                    if (!Array.from(selectFicha.options).some(opt => opt.value === String(f))) {
+                    if (!Array.from(selectFicha.options).some(opt => opt.value === f)) {
                         const opt = document.createElement('option');
                         opt.value = f;
                         opt.textContent = `Ficha ${f}`;
                         selectFicha.appendChild(opt);
                     }
                     selectFicha.value = f;
-                    const fechaCargada = await actualizarFechasAprendices(f, fecha || '');
-                    guardarContextoCorte(f, fechaCargada || '', 'aprendices.php');
+                    await actualizarFechasAprendices(f, fecha || '');
                 } else {
-                    await actualizarFechasAprendices('');
+                    const fechaSel = document.getElementById('fecha_reporte');
+                    if (fechaSel) fechaSel.innerHTML = '<option value="">Seleccione una ficha</option>';
                 }
-
                 if (e && selectEstado) selectEstado.value = e;
                 if (j && selectJuicio) selectJuicio.value = j;
                 if (s && inputSearch) inputSearch.value = s;
 
+                guardarContextoAprendices();
                 await fetchData();
             }
 

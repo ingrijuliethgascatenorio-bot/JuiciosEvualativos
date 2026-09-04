@@ -90,9 +90,9 @@
                             </select>
                         </div>
                         <div class="form-group">
-                            <label>Corte / Fecha del reporte</label>
-                            <select name="fecha_reporte" id="fecha_reporte" class="form-control" disabled>
-                                <option value="">Seleccione una ficha para consultar los cortes</option>
+                            <label>Corte / Fecha del Reporte</label>
+                            <select name="fecha_reporte" id="fecha_reporte" class="form-control">
+                                <option value="">Seleccione una ficha</option>
                             </select>
                         </div>
                         <div class="form-group">
@@ -235,13 +235,18 @@
         async function confirmReset() {
             const { isConfirmed } = await Swal.fire({
                 title: '¿Limpiar sistema?',
-                text: "Se eliminarán todos los aprendices y juicios.",
+                text: "Se eliminarán todas las fichas, aprendices, juicios y cortes históricos.",
                 icon: 'warning', showCancelButton: true,
                 confirmButtonColor: '#ef4444', confirmButtonText: 'Sí, borrar todo'
             });
             if(isConfirmed) {
                 const res = await fetch('api.php?action=delete_all').then(r => r.json());
-                if(res.success) location.reload();
+                if(res.success) {
+                    sessionStorage.removeItem('sgje_nav_context');
+                    Swal.fire('Éxito', res.message, 'success').then(() => location.reload());
+                } else {
+                    Swal.fire('Error', res.message || 'Error al eliminar', 'error');
+                }
             }
         }
         document.getElementById('archivo').addEventListener('change', e => {

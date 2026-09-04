@@ -33,12 +33,10 @@ try {
     // ── PASO 2: Crear tabla corte_aprendices ─────────────────────────────────────
     echo "\n[PASO 2] Verificando / creando tabla corte_aprendices...\n";
     $pdo->exec("
-        CREATE TABLE IF NOT EXISTS corte_aprendices (
-            id_importacion INTEGER NOT NULL REFERENCES historial_importaciones(id) ON DELETE CASCADE,
-            numero_documento VARCHAR(50) NOT NULL REFERENCES aprendices(numero_documento) ON DELETE CASCADE,
-            id_estado INTEGER REFERENCES estados(id_estado),
-            PRIMARY KEY (id_importacion, numero_documento)
-        );
+        
+    
+
+    
     ");
     echo "  ✓ Tabla corte_aprendices lista.\n";
 

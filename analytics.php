@@ -41,8 +41,8 @@
                 <select id="filtroFicha" class="form-control" style="width:180px;" onchange="onFichaChange()">
                     <option value="">Todas las fichas</option>
                 </select>
-                <select id="filtroFecha" class="form-control" style="width:220px;" onchange="onFechaChange()" disabled>
-                    <option value="">Seleccione una ficha para consultar los cortes</option>
+                <select id="filtroFecha" class="form-control" style="width:200px;" onchange="cargarTodo()">
+                    <option value="">Último corte</option>
                 </select>
                 <button onclick="cargarTodo()" class="btn btn-primary">
                     <i data-lucide="refresh-cw" style="width:14px;height:14px;"></i> Actualizar
@@ -192,7 +192,7 @@
     async function confirmReset() {
         const { isConfirmed } = await Swal.fire({
             title: '¿Limpiar sistema?',
-            text: "Se eliminarán todos los aprendices y juicios.",
+            text: "Se eliminarán todas las fichas, aprendices, juicios y cortes históricos.",
             icon: 'warning',
             showCancelButton: true,
             confirmButtonColor: '#ef4444',
@@ -200,7 +200,12 @@
         });
         if (isConfirmed) {
             const res = await fetch('api.php?action=delete_all').then(r => r.json());
-            if (res.success) window.location.href = 'index.php';
+            if (res.success) {
+                sessionStorage.removeItem('sgje_nav_context');
+                Swal.fire('Éxito', res.message, 'success').then(() => { window.location.href = 'index.php'; });
+            } else {
+                Swal.fire('Error', res.message || 'Error al eliminar', 'error');
+            }
         }
     }
 

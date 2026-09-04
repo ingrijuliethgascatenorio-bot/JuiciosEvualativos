@@ -9,8 +9,7 @@ if (empty($documento)) {
     die("Documento no especificado.");
 }
 
-$stmt = $pdo->prepare("SELECT a.numero_documento, a.nombres, a.apellidos, a.numero_ficha, 
-                              e.nombre as estado_base
+$stmt = $pdo->prepare("SELECT a.numero_documento, a.nombres, a.apellidos, a.numero_ficha, a.id_estado, e.nombre as estado_base
                        FROM aprendices a
                        JOIN estados e ON a.id_estado = e.id_estado
                        WHERE a.numero_documento = :doc LIMIT 1");
@@ -21,7 +20,6 @@ if (!$aprendiz) {
     die("Aprendiz no encontrado.");
 }
 
-// REGLA 12: Si no viene ficha en URL, resolver desde el registro del aprendiz
 if (empty($ficha)) {
     $ficha = (string)$aprendiz['numero_ficha'];
 }
@@ -42,16 +40,17 @@ if (!empty($ficha)) {
     }
 }
 
-// Resolver estado del aprendiz en este corte si existe en corte_aprendices
-$aprendiz['estado'] = $aprendiz['estado_base'];
+// Resolver estado del aprendiz en este corte específico si existe corte_aprendices
+$estadoAprendiz = $aprendiz['estado_base'];
 if ($id_corte !== null) {
-    $stmtEstadoCorte = $pdo->prepare("SELECT e.nombre FROM corte_aprendices ca JOIN estados e ON ca.id_estado = e.id_estado WHERE ca.id_importacion = :id_corte AND ca.numero_documento = :doc LIMIT 1");
-    $stmtEstadoCorte->execute([':id_corte' => $id_corte, ':doc' => $documento]);
-    $nombreEstadoCorte = $stmtEstadoCorte->fetchColumn();
-    if ($nombreEstadoCorte) {
-        $aprendiz['estado'] = $nombreEstadoCorte;
+    $stmtEstadoCorte = $pdo->prepare("SELECT e.nombre FROM corte_aprendices ca JOIN estados e ON ca.id_estado = e.id_estado WHERE ca.id_importacion = :corte AND ca.numero_documento = :doc LIMIT 1");
+    $stmtEstadoCorte->execute([':corte' => $id_corte, ':doc' => $documento]);
+    $estCorte = $stmtEstadoCorte->fetchColumn();
+    if ($estCorte) {
+        $estadoAprendiz = $estCorte;
     }
 }
+$aprendiz['estado'] = $estadoAprendiz;
 
 $stmt_detalles = $pdo->prepare("SELECT c.nombre_comp, r.nombre_resultado, jc.descripcion as juicio,
                                        mr.fecha_registro, i.nombres_apellidos as funcionario
@@ -68,7 +67,7 @@ $detalles = $stmt_detalles->fetchAll(PDO::FETCH_ASSOC);
 
 $from = $_GET['from'] ?? 'aprendices.php';
 $returnParams = [];
-if (!empty($ficha)) $returnParams['ficha'] = $ficha;
+if (!empty($_GET['ficha'])) $returnParams['ficha'] = $_GET['ficha'];
 if (!empty($fecha_reporte)) $returnParams['fecha_reporte'] = $fecha_reporte;
 if (!empty($_GET['estado'])) $returnParams['estado'] = $_GET['estado'];
 if (!empty($_GET['juicio'])) $returnParams['juicio'] = $_GET['juicio'];
@@ -325,40 +324,30 @@ $avance_aprendiz = $total_evaluaciones > 0 ? round(($total_aprobados / $total_ev
     // Inicializar tabla
     renderTable();
 
-    // Gestión del botón Volver para preservar el contexto de filtros (REGLA 13)
+    // Gestión del botón Volver para preservar el contexto de filtros
     (function initBotonVolver() {
         const btn = document.getElementById('btnVolver');
         if (!btn) return;
 
-        const urlParams = new URLSearchParams(window.location.search);
-        const fromParam = urlParams.get('from');
-
         let ctx = null;
         try {
-            const raw = sessionStorage.getItem('sgje_contexto_corte') || sessionStorage.getItem('sgje_nav_context');
+            const raw = sessionStorage.getItem('sgje_nav_context');
             if (raw) ctx = JSON.parse(raw);
         } catch(_) {}
 
-        const targetBase = fromParam || (ctx && ctx.seccionOrigen) || 'aprendices.php';
-        const params = new URLSearchParams();
+        if (ctx && ctx.seccionOrigen) {
+            const params = new URLSearchParams();
+            if (ctx.ficha) params.set('ficha', ctx.ficha);
+            if (ctx.fecha_reporte) params.set('fecha_reporte', ctx.fecha_reporte);
+            if (ctx.estado) params.set('estado', ctx.estado);
+            if (ctx.juicio) params.set('juicio', ctx.juicio);
+            if (ctx.competencia) params.set('competencia', ctx.competencia);
+            if (ctx.busqueda || ctx.search) params.set('search', ctx.busqueda || ctx.search);
 
-        const fichaVal = urlParams.get('ficha') || (ctx ? ctx.ficha : '') || '<?= addslashes($ficha) ?>';
-        const fechaVal = urlParams.get('fecha_reporte') || (ctx ? ctx.fecha_reporte : '') || '<?= addslashes($fecha_reporte) ?>';
-
-        if (fichaVal) params.set('ficha', fichaVal);
-        if (fechaVal) params.set('fecha_reporte', fechaVal);
-
-        if (urlParams.has('estado')) params.set('estado', urlParams.get('estado'));
-        else if (ctx && ctx.estado) params.set('estado', ctx.estado);
-
-        if (urlParams.has('juicio')) params.set('juicio', urlParams.get('juicio'));
-        else if (ctx && ctx.juicio) params.set('juicio', ctx.juicio);
-
-        if (urlParams.has('search')) params.set('search', urlParams.get('search'));
-        else if (ctx && (ctx.busqueda || ctx.search)) params.set('search', ctx.busqueda || ctx.search);
-
-        const queryString = params.toString();
-        btn.href = targetBase + (queryString ? '?' + queryString : '');
+            const queryString = params.toString();
+            const target = ctx.seccionOrigen + (queryString ? '?' + queryString : '');
+            btn.href = target;
+        }
     })();
     </script>
 </body>

@@ -67,8 +67,8 @@
                             <select id="fichaFilter" class="filter-control"><option value="">Todas las fichas</option></select>
                         </div>
                         <div class="filter-group">
-                            <label>Corte / Fecha del reporte</label>
-                            <select id="fechaFilter" class="filter-control" disabled><option value="">Seleccione una ficha para consultar los cortes</option></select>
+                            <label>Corte / Fecha de Reporte</label>
+                            <select id="fechaFilter" class="filter-control"><option value="">Último corte</option></select>
                         </div>
                         <div class="filter-group">
                             <label>Código de Competencia</label>
@@ -123,72 +123,48 @@
                 return dateStr;
             }
 
-            const CONTEXTO_CORTE_KEY = 'sgje_contexto_corte';
-
-            function guardarContextoCorte(ficha, fecha_reporte, seccionOrigen = 'analisis.php') {
-                try {
-                    const payload = {
-                        ficha: ficha ? String(ficha) : '',
-                        fecha_reporte: fecha_reporte ? String(fecha_reporte) : '',
-                        seccionOrigen: seccionOrigen
-                    };
-                    sessionStorage.setItem(CONTEXTO_CORTE_KEY, JSON.stringify(payload));
-                } catch (e) {
-                    console.warn('No se pudo guardar contexto en sessionStorage:', e);
-                }
-            }
-
-            function obtenerContextoCorte() {
-                try {
-                    const raw = sessionStorage.getItem(CONTEXTO_CORTE_KEY);
-                    if (raw) return JSON.parse(raw);
-                } catch (e) {
-                    console.warn('No se pudo leer contexto de sessionStorage:', e);
-                }
-                return null;
-            }
-
             async function actualizarFechasAnalisis(ficha, seleccionada = '') {
+                fechaFilter.innerHTML = '';
                 if (!ficha) {
-                    fechaFilter.disabled = true;
-                    fechaFilter.innerHTML = '<option value="">Seleccione una ficha para consultar los cortes</option>';
-                    return '';
+                    fechaFilter.innerHTML = '<option value="">Seleccione una ficha</option>';
+                    return;
                 }
-
-                fechaFilter.disabled = true;
-                fechaFilter.innerHTML = '<option value="">Cargando cortes...</option>';
-
                 try {
                     const res = await fetch(`api.php?action=get_fechas_ficha&ficha=${encodeURIComponent(ficha)}`).then(r => r.json());
                     if (Array.isArray(res) && res.length > 0) {
-                        fechaFilter.innerHTML = '';
-                        const fechaExiste = seleccionada && res.some(c => c.fecha_reporte === seleccionada);
-                        const fechaElegida = fechaExiste ? seleccionada : res[0].fecha_reporte;
-
+                        let seleccionadoValido = false;
                         res.forEach((c, idx) => {
                             const opt = document.createElement('option');
                             opt.value = c.fecha_reporte;
-                            opt.textContent = idx === 0 
-                                ? `${formatDateDisplay(c.fecha_reporte)} — Último corte` 
-                                : formatDateDisplay(c.fecha_reporte);
-                            if (c.fecha_reporte === fechaElegida) opt.selected = true;
+                            opt.textContent = idx === 0 ? `${formatDateDisplay(c.fecha_reporte)} — Último corte` : formatDateDisplay(c.fecha_reporte);
+                            if (seleccionada && seleccionada === c.fecha_reporte) {
+                                opt.selected = true;
+                                seleccionadoValido = true;
+                            }
                             fechaFilter.appendChild(opt);
                         });
-
-                        fechaFilter.value = fechaElegida;
-                        fechaFilter.disabled = false;
-                        return fechaElegida;
+                        if (!seleccionadoValido && fechaFilter.options.length > 0) {
+                            fechaFilter.options[0].selected = true;
+                        }
                     } else {
                         fechaFilter.innerHTML = '<option value="">Sin cortes registrados</option>';
-                        fechaFilter.disabled = true;
-                        return '';
                     }
                 } catch(e) {
                     console.error('Error cargando fechas:', e);
-                    fechaFilter.innerHTML = '<option value="">Error al cargar cortes</option>';
-                    fechaFilter.disabled = true;
-                    return '';
+                    fechaFilter.innerHTML = '<option value="">Error cargando fechas</option>';
                 }
+            }
+
+            function guardarContextoAnalisis() {
+                const ficha = fichaFilter.value || '';
+                const fecha_reporte = fechaFilter ? fechaFilter.value : '';
+                const ctx = {
+                    seccionOrigen: 'analisis.php',
+                    ficha,
+                    fecha_reporte
+                };
+                sessionStorage.setItem('sgje_nav_context', JSON.stringify(ctx));
+                return ctx;
             }
 
             async function loadFichas() {
@@ -321,16 +297,14 @@
                     let html = '<div style="display:grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap:12px;">';
                     res.forEach(ap => {
                         const initials = (ap.nombres[0] + ap.apellidos[0]).toUpperCase();
-                        const detalleUrl = `detalle.php?documento=${encodeURIComponent(ap.numero_documento)}&ficha=${encodeURIComponent(ficha)}&fecha_reporte=${encodeURIComponent(fecha)}&from=analisis.php`;
                         html += `
-                            <a href="${detalleUrl}" style="text-decoration:none; color:inherit; display:flex; align-items:center; gap:10px; background:#fff; padding:10px; border-radius:10px; border:1px solid #e2e8f0; box-shadow:0 1px 2px rgba(0,0,0,0.05); transition:all 0.2s;" onmouseover="this.style.borderColor='var(--primary)'" onmouseout="this.style.borderColor='#e2e8f0'">
+                            <div style="display:flex; align-items:center; gap:10px; background:#fff; padding:10px; border-radius:10px; border:1px solid #e2e8f0; box-shadow:0 1px 2px rgba(0,0,0,0.05);">
                                 <div class="apprentice-avatar" style="width:28px; height:28px; font-size:10px;">${initials}</div>
-                                <div style="flex:1; min-width:0;">
-                                    <div style="font-weight:600; font-size:13px; color:var(--text-main); line-height:1.2; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${ap.nombres} ${ap.apellidos}</div>
+                                <div>
+                                    <div style="font-weight:600; font-size:13px; color:var(--text-main); line-height:1.2;">${ap.nombres} ${ap.apellidos}</div>
                                     <div style="font-size:10px; color:#94a3b8;">${ap.numero_documento}</div>
                                 </div>
-                                <span style="font-size:11px; color:var(--primary); font-weight:600;">Ver →</span>
-                            </a>`;
+                            </div>`;
                     });
                     html += '</div>';
                     content.innerHTML = `<div style="margin-bottom:12px; font-weight:700; font-size:11px; color:var(--primary); text-transform:uppercase; letter-spacing:0.05em;">Aprendices que ya aprobaron:</div>` + html;
@@ -351,21 +325,14 @@
             }
 
             fichaFilter.addEventListener('change', async () => {
-                const fichaVal = fichaFilter.value;
-                if (fechaFilter) {
-                    fechaFilter.disabled = true;
-                    fechaFilter.innerHTML = '<option value="">Cargando cortes...</option>';
-                }
-                const fechaCargada = await actualizarFechasAnalisis(fichaVal);
-                guardarContextoCorte(fichaVal, fechaCargada || '', 'analisis.php');
-                await loadAnalysis();
+                await actualizarFechasAnalisis(fichaFilter.value);
+                guardarContextoAnalisis();
+                loadAnalysis();
             });
-
-            fechaFilter.addEventListener('change', async () => {
-                guardarContextoCorte(fichaFilter.value, fechaFilter.value, 'analisis.php');
-                await loadAnalysis();
+            fechaFilter.addEventListener('change', () => {
+                guardarContextoAnalisis();
+                loadAnalysis();
             });
-
             document.getElementById('compFilter').addEventListener('input', () => {
                 clearTimeout(this.ct);
                 this.ct = setTimeout(loadAnalysis, 500);
@@ -378,40 +345,30 @@
                 renderPage();
             });
 
-            // REGLA 4: Inicialización con prioridad de contexto
             await loadFichas();
             const urlParams = new URLSearchParams(window.location.search);
-            const ctx = obtenerContextoCorte();
+            let f = urlParams.get('ficha');
+            let fecha = urlParams.get('fecha_reporte');
 
-            let fichaInicial = '';
-            if (urlParams.has('ficha')) {
-                fichaInicial = urlParams.get('ficha') || '';
-            } else if (ctx && ctx.ficha) {
-                fichaInicial = ctx.ficha;
+            if (!f && !fecha) {
+                try {
+                    const raw = sessionStorage.getItem('sgje_nav_context');
+                    if (raw) {
+                        const ctx = JSON.parse(raw);
+                        f = ctx.ficha || '';
+                        fecha = ctx.fecha_reporte || '';
+                    }
+                } catch(_) {}
             }
 
-            let fechaInicial = '';
-            if (urlParams.has('fecha_reporte')) {
-                fechaInicial = urlParams.get('fecha_reporte') || '';
-            } else if (ctx && ctx.fecha_reporte && (!fichaInicial || ctx.ficha === fichaInicial)) {
-                fechaInicial = ctx.fecha_reporte;
-            }
-
-            if (fichaInicial && fichaFilter) {
-                if (!Array.from(fichaFilter.options).some(o => o.value === String(fichaInicial))) {
-                    const opt = document.createElement('option');
-                    opt.value = fichaInicial;
-                    opt.textContent = `Ficha ${fichaInicial}`;
-                    fichaFilter.appendChild(opt);
-                }
-                fichaFilter.value = fichaInicial;
-                const fechaFinal = await actualizarFechasAnalisis(fichaInicial, fechaInicial);
-                guardarContextoCorte(fichaInicial, fechaFinal || '', 'analisis.php');
+            if (f) {
+                fichaFilter.value = f;
+                await actualizarFechasAnalisis(fichaFilter.value, fecha || '');
             } else {
-                await actualizarFechasAnalisis('');
+                fechaFilter.innerHTML = '<option value="">Seleccione una ficha</option>';
             }
-
-            await loadAnalysis();
+            guardarContextoAnalisis();
+            loadAnalysis();
             lucide.createIcons();
 
             // Campana

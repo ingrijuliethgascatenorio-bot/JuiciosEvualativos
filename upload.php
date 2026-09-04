@@ -68,25 +68,190 @@ if (!function_exists('parseFecha')) {
 }
 
 if (!function_exists('parseFechaCorte')) {
-    function parseFechaCorte(?string $raw): ?string {
+    function parseFechaCorte($raw): ?string {
         if ($raw === null) return null;
-        $raw = trim($raw);
+        if ($raw instanceof \DateTimeInterface) {
+            return $raw->format('Y-m-d');
+        }
+        $raw = trim((string)$raw);
         if ($raw === '' || $raw === '-') return null;
-        
+
+        // Formato DD/MM/YYYY o DD-MM-YYYY
         if (preg_match('/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/', $raw, $m)) {
-            return sprintf('%04d-%02d-%02d', $m[3], $m[2], $m[1]);
+            return sprintf('%04d-%02d-%02d', (int)$m[3], (int)$m[2], (int)$m[1]);
         }
+
+        // Formato YYYY/MM/DD o YYYY-MM-DD
         if (preg_match('/(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})/', $raw, $m)) {
-            return sprintf('%04d-%02d-%02d', $m[1], $m[2], $m[3]);
+            return sprintf('%04d-%02d-%02d', (int)$m[1], (int)$m[2], (int)$m[3]);
         }
-        if (is_numeric($raw)) {
+
+        // Formato con mes en texto en español (ej: "01 de Septiembre de 2026", "22-abr-2025")
+        $mesesEs = [
+            'ENE' => 1, 'FEB' => 2, 'MAR' => 3, 'ABR' => 4, 'MAY' => 5, 'JUN' => 6,
+            'JUL' => 7, 'AGO' => 8, 'SEP' => 9, 'SET' => 9, 'OCT' => 10, 'NOV' => 11, 'DIC' => 12,
+            'ENERO' => 1, 'FEBRERO' => 2, 'MARZO' => 3, 'ABRIL' => 4, 'MAYO' => 5, 'JUNIO' => 6,
+            'JULIO' => 7, 'AGOSTO' => 8, 'SEPTIEMBRE' => 9, 'SETIEMBRE' => 9, 'OCTUBRE' => 10, 'NOVIEMBRE' => 11, 'DICIEMBRE' => 12
+        ];
+        if (preg_match('/(\d{1,2})\s*(?:de|\-)?\s*([a-zA-ZáéíóúÁÉÍÓÚ]+)\s*(?:de|\-)?\s*(\d{4})/i', $raw, $m)) {
+            $mesKey = strtoupper(normalizarTexto($m[2]));
+            if (isset($mesesEs[$mesKey])) {
+                return sprintf('%04d-%02d-%02d', (int)$m[3], (int)$mesesEs[$mesKey], (int)$m[1]);
+            }
+        }
+
+        // Serial Excel numérico
+        if (is_numeric($raw) && (float)$raw > 1000) {
             try {
                 return Date::excelToDateTimeObject($raw)->format('Y-m-d');
-            } catch (Exception $e) {
+            } catch (\Exception $e) {
                 return null;
             }
         }
+
         return null;
+    }
+}
+
+if (!function_exists('obtenerMetadatosReporteExcel')) {
+    function obtenerMetadatosReporteExcel($spreadsheet): array {
+        $sheet = $spreadsheet->getActiveSheet();
+        $rows = $sheet->toArray();
+
+        $meta = [
+            'numero_ficha'  => null,
+            'fecha_reporte' => null,
+            'cod_programa'  => null,
+            'version'       => null,
+            'nom_programa'  => null,
+            'estado_ficha'  => null,
+            'fecha_inicio'  => null,
+            'fecha_fin'     => null,
+            'modalidad'     => null,
+            'regional'      => null,
+            'centro'        => null,
+        ];
+
+        $maxRows = min(30, count($rows));
+
+        for ($r = 0; $r < $maxRows; $r++) {
+            $headers = $rows[$r];
+            $colCount = count($headers);
+
+            for ($c = 0; $c < $colCount; $c++) {
+                $rawCell = $headers[$c];
+                if ($rawCell === null) continue;
+                $cellText = normalizarTexto((string)$rawCell);
+                if ($cellText === '') continue;
+
+                // Buscar el siguiente valor no vacío en la misma fila
+                $nextVal = '';
+                $nextColIdx = -1;
+                for ($k = $c + 1; $k < $colCount; $k++) {
+                    if ($headers[$k] !== null && trim((string)$headers[$k]) !== '') {
+                        $nextVal = trim((string)$headers[$k]);
+                        $nextColIdx = $k;
+                        break;
+                    }
+                }
+
+                // 1. FECHA DEL REPORTE / CORTE (Extraída directamente del Excel)
+                if ($meta['fecha_reporte'] === null) {
+                    if (
+                        preg_match('/FECHA\s*(?:DEL\s*|DE\s*)?REPORTE/i', $cellText) ||
+                        preg_match('/FECHA\s*(?:DE\s*)?CORTE/i', $cellText) ||
+                        preg_match('/(?:^|\s)CORTE[:\s]/i', $cellText) ||
+                        preg_match('/GENERADO\s*EL/i', $cellText) ||
+                        preg_match('/FECHA\s*(?:DE\s*)?GENERACI[OÓ]N/i', $cellText) ||
+                        preg_match('/FECHA\s*(?:DE\s*)?EMISI[OÓ]N/i', $cellText)
+                    ) {
+                        $fCandidate = parseFechaCorte($nextVal);
+                        if (!$fCandidate) {
+                            $fCandidate = parseFechaCorte($rawCell);
+                        }
+                        if (!$fCandidate && $nextColIdx !== -1) {
+                            try {
+                                $cellCoord = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($nextColIdx + 1) . ($r + 1);
+                                $cellObj = $sheet->getCell($cellCoord);
+                                if ($cellObj && Date::isDateTime($cellObj)) {
+                                    $fCandidate = Date::excelToDateTimeObject($cellObj->getValue())->format('Y-m-d');
+                                }
+                            } catch (\Exception $e) {}
+                        }
+                        if ($fCandidate) {
+                            $meta['fecha_reporte'] = $fCandidate;
+                        }
+                    }
+                }
+
+                // 2. FICHA DE CARACTERIZACIÓN (Extraída directamente del Excel)
+                if ($meta['numero_ficha'] === null) {
+                    if (
+                        preg_match('/FICHA\s*DE\s*CARACTERIZACI[OÓ]N/i', $cellText) ||
+                        preg_match('/N[UÚ]MERO\s*DE\s*FICHA/i', $cellText) ||
+                        preg_match('/NO\.?\s*FICHA/i', $cellText) ||
+                        (preg_match('/^FICHA[:\s]/i', $cellText) && !preg_match('/ESTADO/i', $cellText))
+                    ) {
+                        if (preg_match('/(\d{5,})/i', $cellText, $mF)) {
+                            $meta['numero_ficha'] = normalizarNumeroFicha($mF[1]);
+                        } elseif ($nextVal !== '' && preg_match('/(\d{5,})/i', $nextVal, $mF)) {
+                            $meta['numero_ficha'] = normalizarNumeroFicha($mF[1]);
+                        }
+                    }
+                }
+
+                // 3. CÓDIGO DE PROGRAMA
+                if ($meta['cod_programa'] === null && preg_match('/C[OÓ][DG]IGO/i', $cellText) && !preg_match('/COMP|RESUL/i', $cellText)) {
+                    if (preg_match('/(\d{4,})/i', $cellText, $mC)) {
+                        $meta['cod_programa'] = normalizarNumeroFicha($mC[1]);
+                    } elseif ($nextVal !== '' && preg_match('/(\d{4,})/i', $nextVal, $mC)) {
+                        $meta['cod_programa'] = normalizarNumeroFicha($mC[1]);
+                    }
+                }
+
+                // 4. VERSIÓN
+                if ($meta['version'] === null && preg_match('/VERSI[OÓ]N/i', $cellText)) {
+                    $meta['version'] = $nextVal ?: '01';
+                }
+
+                // 5. DENOMINACIÓN / NOMBRE DEL PROGRAMA
+                if ($meta['nom_programa'] === null && (preg_match('/DENOMINACI[OÓ]N/i', $cellText) || preg_match('/PROGRAMA\s*DE\s*FORMACI[OÓ]N/i', $cellText))) {
+                    $meta['nom_programa'] = $nextVal;
+                }
+
+                // 6. ESTADO DE LA FICHA
+                if ($meta['estado_ficha'] === null && preg_match('/ESTADO\s+DE\s+LA\s+FICHA/i', $cellText)) {
+                    $meta['estado_ficha'] = $nextVal ?: 'EN EJECUCION';
+                }
+
+                // 7. FECHA INICIO
+                if ($meta['fecha_inicio'] === null && preg_match('/FECHA\s+INICIO/i', $cellText)) {
+                    $meta['fecha_inicio'] = parseFechaCorte($nextVal);
+                }
+
+                // 8. FECHA FIN
+                if ($meta['fecha_fin'] === null && preg_match('/FECHA\s+FIN/i', $cellText)) {
+                    $meta['fecha_fin'] = parseFechaCorte($nextVal);
+                }
+
+                // 9. MODALIDAD
+                if ($meta['modalidad'] === null && preg_match('/MODALIDAD/i', $cellText)) {
+                    $meta['modalidad'] = $nextVal ?: 'PRESENCIAL';
+                }
+
+                // 10. REGIONAL
+                if ($meta['regional'] === null && preg_match('/REGIONAL/i', $cellText)) {
+                    $meta['regional'] = $nextVal;
+                }
+
+                // 11. CENTRO
+                if ($meta['centro'] === null && preg_match('/CENTRO\s+DE\s+FORMACI[OÓ]N/i', $cellText)) {
+                    $meta['centro'] = $nextVal;
+                }
+            }
+        }
+
+        return $meta;
     }
 }
 
@@ -255,83 +420,37 @@ try {
         return;
     }
 
-    // 3. Extracción de metadatos de la cabecera (inicializados en null)
-    $meta = [
-        'fecha_reporte' => null,
-        'ficha' => null,
-        'cod_programa' => null,
-        'version' => null,
-        'nom_programa' => null,
-        'estado_ficha' => null,
-        'fecha_inicio' => null,
-        'fecha_fin' => null,
-        'modalidad' => null,
-        'regional' => null,
-        'centro' => null,
-    ];
+    // 3. Extracción de metadatos de la cabecera directamente desde el Excel
+    $meta = obtenerMetadatosReporteExcel($spreadsheet);
 
+    // 4. Validaciones obligatorias de la cabecera (Ficha y Fecha extraídas exclusivamente del archivo)
+    if (empty($meta['numero_ficha']) || !is_numeric($meta['numero_ficha'])) {
+        throw new Exception('No se pudo detectar el número de Ficha de Caracterización en el archivo Excel.');
+    }
+    $ficha = (int)$meta['numero_ficha'];
+
+    if (empty($meta['fecha_reporte'])) {
+        throw new Exception('No se pudo detectar una Fecha del Reporte o Corte válida en el archivo Excel.');
+    }
+    $fecha_reporte = $meta['fecha_reporte'];
+
+    if (empty($meta['cod_programa']) || !is_numeric($meta['cod_programa'])) {
+        throw new Exception('No se pudo detectar el Código del Programa en el archivo Excel.');
+    }
+    $cod_programa = (int)$meta['cod_programa'];
+    $nom_programa = $meta['nom_programa'] ?: 'PROGRAMA DE FORMACION';
+    $version = $meta['version'] ?: '01';
+    $modalidad = $meta['modalidad'] ?: 'PRESENCIAL';
+    $estado_ficha = $meta['estado_ficha'] ?: 'EN EJECUCION';
+    $fecha_inicio = $meta['fecha_inicio'];
+    $fecha_fin = $meta['fecha_fin'];
+
+    // Búsqueda de la fila de encabezados de la tabla de juicios evaluativos
     $headerRowIndex = null;
     $colMap = [];
 
-    for ($r = 0; $r < min(20, count($rows)); $r++) {
+    for ($r = 0; $r < min(30, count($rows)); $r++) {
         $headers = $rows[$r];
-        
-        for ($c = 0; $c < count($headers); $c++) {
-            $cellText = normalizarTexto((string)($headers[$c] ?? ''));
-            if ($cellText === '') continue;
-
-            $nextVal = '';
-            for ($k = $c + 1; $k < count($headers); $k++) {
-                if (trim((string)$headers[$k]) !== '') {
-                    $nextVal = trim((string)$headers[$k]);
-                    break;
-                }
-            }
-
-            if (preg_match('/FECHA\s+DEL\s+REPORTE/i', $cellText) && $meta['fecha_reporte'] === null) {
-                $meta['fecha_reporte'] = parseFechaCorte($nextVal) ?: parseFechaCorte($cellText);
-            }
-            if (preg_match('/FICHA\s+DE\s+CARACTERIZACI[OÓ]N/i', $cellText) && !preg_match('/ESTADO/i', $cellText) && $meta['ficha'] === null) {
-                if (preg_match('/FICHA\s+DE\s+CARACTERIZACI[OÓ]N[:\s]*(\d+)/i', $cellText, $mF)) {
-                    $meta['ficha'] = normalizarNumeroFicha($mF[1]);
-                } else {
-                    $meta['ficha'] = normalizarNumeroFicha($nextVal);
-                }
-            }
-            if (preg_match('/C[OÓ][DG]IGO/i', $cellText) && $meta['cod_programa'] === null) {
-                if (preg_match('/C[OÓ][DG]IGO[:\s]*(\d+)/i', $cellText, $mC)) {
-                    $meta['cod_programa'] = normalizarNumeroFicha($mC[1]);
-                } else {
-                    $meta['cod_programa'] = normalizarNumeroFicha($nextVal);
-                }
-            }
-            if (preg_match('/VERSI[OÓ]N/i', $cellText) && $meta['version'] === null) {
-                $meta['version'] = $nextVal;
-            }
-            if (preg_match('/DENOMINACI[OÓ]N/i', $cellText) && $meta['nom_programa'] === null) {
-                $meta['nom_programa'] = $nextVal;
-            }
-            if (preg_match('/ESTADO\s+DE\s+LA\s+FICHA/i', $cellText) && $meta['estado_ficha'] === null) {
-                $meta['estado_ficha'] = $nextVal;
-            }
-            if (preg_match('/FECHA\s+INICIO/i', $cellText) && $meta['fecha_inicio'] === null) {
-                $meta['fecha_inicio'] = parseFechaCorte($nextVal);
-            }
-            if (preg_match('/FECHA\s+FIN/i', $cellText) && $meta['fecha_fin'] === null) {
-                $meta['fecha_fin'] = parseFechaCorte($nextVal);
-            }
-            if (preg_match('/MODALIDAD/i', $cellText) && $meta['modalidad'] === null) {
-                $meta['modalidad'] = $nextVal;
-            }
-            if (preg_match('/REGIONAL/i', $cellText) && $meta['regional'] === null) {
-                $meta['regional'] = $nextVal;
-            }
-            if (preg_match('/CENTRO\s+DE\s+FORMACI[OÓ]N/i', $cellText) && $meta['centro'] === null) {
-                $meta['centro'] = $nextVal;
-            }
-        }
-
-        // Búsqueda de la fila de encabezados de la tabla de juicios
         $tempMap = [];
         for ($c = 0; $c < count($headers); $c++) {
             $headerName = normalizarTexto((string)$headers[$c]);
@@ -377,28 +496,6 @@ try {
             break;
         }
     }
-
-    // 4. Validaciones obligatorias de la cabecera
-    if (empty($meta['ficha']) || !is_numeric($meta['ficha'])) {
-        throw new Exception('No se pudo detectar el número de Ficha de Caracterización en el archivo.');
-    }
-    $ficha = (int)$meta['ficha'];
-
-    if (empty($meta['fecha_reporte'])) {
-        throw new Exception('No se pudo detectar una Fecha del Reporte válida en el archivo.');
-    }
-    $fecha_reporte = $meta['fecha_reporte'];
-
-    if (empty($meta['cod_programa']) || !is_numeric($meta['cod_programa'])) {
-        throw new Exception('No se pudo detectar el Código del Programa en el archivo.');
-    }
-    $cod_programa = (int)$meta['cod_programa'];
-    $nom_programa = $meta['nom_programa'] ?: 'PROGRAMA DE FORMACION';
-    $version = $meta['version'] ?: '01';
-    $modalidad = $meta['modalidad'] ?: 'PRESENCIAL';
-    $estado_ficha = $meta['estado_ficha'] ?: 'EN EJECUCION';
-    $fecha_inicio = $meta['fecha_inicio'];
-    $fecha_fin = $meta['fecha_fin'];
 
     if ($headerRowIndex === null) {
         throw new Exception('No se encontró la fila de encabezados de la tabla de juicios evaluativos.');
@@ -461,7 +558,43 @@ try {
     // 7. Iniciar Transacción Atómica
     $pdo->beginTransaction();
 
-    // 7.1. Crear o resolver corte histórico en historial_importaciones
+    // 7.1. Upsert Programa (Identidad estrictamente codigo_programa)
+    $stmt_prog = $pdo->prepare("
+        INSERT INTO programas (codigo_programa, nombre_programa, version, modalidad)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT (codigo_programa) 
+        DO UPDATE SET 
+            nombre_programa = EXCLUDED.nombre_programa,
+            version = EXCLUDED.version,
+            modalidad = EXCLUDED.modalidad
+    ");
+    $stmt_prog->execute([$cod_programa, $nom_programa, $version, $modalidad]);
+
+    // 7.2. Upsert Ficha (Debe existir antes de historial_importaciones por FK)
+    if (!$fichaActual) {
+        $stmt_ins_f = $pdo->prepare("
+            INSERT INTO fichas (numero_ficha, codigo_programa, fecha_inicio, fecha_fin, estado_ficha, fecha_reporte)
+            VALUES (?, ?, ?, ?, ?, ?)
+        ");
+        $stmt_ins_f->execute([$ficha, $cod_programa, $fecha_inicio, $fecha_fin, $estado_ficha, $fecha_reporte]);
+    } else {
+        // Solo actualizar fecha_reporte en fichas si la fecha importada es igual o más reciente
+        $debeActualizarFechaFicha = (!$fecha_bd || $fecha_reporte >= $fecha_bd);
+        $nuevaFechaFicha = $debeActualizarFechaFicha ? $fecha_reporte : $fecha_bd;
+
+        $stmt_upd_f = $pdo->prepare("
+            UPDATE fichas SET 
+                codigo_programa = ?,
+                fecha_inicio = COALESCE(?, fecha_inicio),
+                fecha_fin = COALESCE(?, fecha_fin),
+                estado_ficha = ?,
+                fecha_reporte = ?
+            WHERE numero_ficha = ?
+        ");
+        $stmt_upd_f->execute([$cod_programa, $fecha_inicio, $fecha_fin, $estado_ficha, $nuevaFechaFicha, $ficha]);
+    }
+
+    // 7.3. Crear o resolver corte histórico en historial_importaciones
     $stmt_corte_fecha = $pdo->prepare("
         SELECT id, hash_archivo, nombre_archivo 
         FROM historial_importaciones 
@@ -497,42 +630,6 @@ try {
         ");
         $stmt_crear_corte->execute([$ficha, $fecha_reporte, $fileName, $fileHash, $modo]);
         $id_importacion = (int)$stmt_crear_corte->fetchColumn();
-    }
-
-    // 8. Upsert Programa (Identidad estrictamente codigo_programa)
-    $stmt_prog = $pdo->prepare("
-        INSERT INTO programas (codigo_programa, nombre_programa, version, modalidad)
-        VALUES (?, ?, ?, ?)
-        ON CONFLICT (codigo_programa) 
-        DO UPDATE SET 
-            nombre_programa = EXCLUDED.nombre_programa,
-            version = EXCLUDED.version,
-            modalidad = EXCLUDED.modalidad
-    ");
-    $stmt_prog->execute([$cod_programa, $nom_programa, $version, $modalidad]);
-
-    // 9. Upsert Ficha
-    if (!$fichaActual) {
-        $stmt_ins_f = $pdo->prepare("
-            INSERT INTO fichas (numero_ficha, codigo_programa, fecha_inicio, fecha_fin, estado_ficha, fecha_reporte)
-            VALUES (?, ?, ?, ?, ?, ?)
-        ");
-        $stmt_ins_f->execute([$ficha, $cod_programa, $fecha_inicio, $fecha_fin, $estado_ficha, $fecha_reporte]);
-    } else {
-        // Solo actualizar fecha_reporte en fichas si la fecha importada es igual o más reciente
-        $debeActualizarFechaFicha = (!$fecha_bd || $fecha_reporte >= $fecha_bd);
-        $nuevaFechaFicha = $debeActualizarFechaFicha ? $fecha_reporte : $fecha_bd;
-
-        $stmt_upd_f = $pdo->prepare("
-            UPDATE fichas SET 
-                codigo_programa = ?,
-                fecha_inicio = COALESCE(?, fecha_inicio),
-                fecha_fin = COALESCE(?, fecha_fin),
-                estado_ficha = ?,
-                fecha_reporte = ?
-            WHERE numero_ficha = ?
-        ");
-        $stmt_upd_f->execute([$cod_programa, $fecha_inicio, $fecha_fin, $estado_ficha, $nuevaFechaFicha, $ficha]);
     }
 
     // 10. Pre-carga y Validación de Catálogos
