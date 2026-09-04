@@ -97,7 +97,7 @@ if ($action === 'get_dashboard') {
                            LEFT JOIN matricula_resultados mr ON a.numero_documento = mr.num_documento_aprendiz AND (:id_corte::int IS NULL OR mr.id_importacion = :id_corte)
                            LEFT JOIN juicios_catalogo jc ON mr.id_juicio_cat = jc.id_juicio_cat
                            LEFT JOIN resultados r ON mr.codigo_resul = r.codigo_resul
-                           LEFT JOIN competencias c ON r.codigo_comp = c.codigo_comp AND c.codigo_programa = f.codigo_programa
+                           LEFT JOIN competencias c ON r.codigo_comp = c.codigo_comp
                            $whereClause");
     $stmt->execute($params);
     $totalAprendices = (int)($stmt->fetch(PDO::FETCH_ASSOC)['total'] ?? 0);
@@ -109,7 +109,7 @@ if ($action === 'get_dashboard') {
                             LEFT JOIN estados e ON a.id_estado = e.id_estado
                             JOIN juicios_catalogo jc ON mr.id_juicio_cat = jc.id_juicio_cat
                             JOIN resultados r ON mr.codigo_resul = r.codigo_resul
-                            JOIN competencias c ON r.codigo_comp = c.codigo_comp AND c.codigo_programa = f.codigo_programa
+                            JOIN competencias c ON r.codigo_comp = c.codigo_comp
                             $whereClause 
                               AND (:id_corte::int IS NULL OR mr.id_importacion = :id_corte)
                               AND jc.descripcion = 'APROBADO'");
@@ -123,7 +123,7 @@ if ($action === 'get_dashboard') {
                             LEFT JOIN estados e ON a.id_estado = e.id_estado
                             JOIN juicios_catalogo jc ON mr.id_juicio_cat = jc.id_juicio_cat
                             JOIN resultados r ON mr.codigo_resul = r.codigo_resul
-                            JOIN competencias c ON r.codigo_comp = c.codigo_comp AND c.codigo_programa = f.codigo_programa
+                            JOIN competencias c ON r.codigo_comp = c.codigo_comp
                             $whereClause 
                               AND (:id_corte::int IS NULL OR mr.id_importacion = :id_corte)
                               AND jc.descripcion = 'POR EVALUAR'");
@@ -161,7 +161,7 @@ if ($action === 'get_dashboard') {
                             LEFT JOIN estados e_corte ON e_corte.id_estado = ca.id_estado
                             LEFT JOIN matricula_resultados mr ON a.numero_documento = mr.num_documento_aprendiz AND (:id_corte::int IS NULL OR mr.id_importacion = :id_corte)
                             LEFT JOIN resultados r ON mr.codigo_resul = r.codigo_resul
-                            LEFT JOIN competencias c ON r.codigo_comp = c.codigo_comp AND c.codigo_programa = f.codigo_programa
+                            LEFT JOIN competencias c ON r.codigo_comp = c.codigo_comp
                             LEFT JOIN juicios_catalogo jc ON mr.id_juicio_cat = jc.id_juicio_cat
                             $whereClause 
                             ORDER BY a.numero_documento, c.nombre_comp 
@@ -262,12 +262,12 @@ if ($action === 'get_project_analysis') {
                     SUM(CASE WHEN jc.descripcion = 'APROBADO' THEN 1 ELSE 0 END) as aprobados,
                     SUM(CASE WHEN jc.descripcion = 'POR EVALUAR' THEN 1 ELSE 0 END) as por_evaluar,
                     SUM(CASE WHEN jc.descripcion = 'NO APROBADO' THEN 1 ELSE 0 END) as no_aprobados
-                FROM competencias c
-                JOIN resultados r ON c.codigo_comp = r.codigo_comp
-                JOIN fichas f ON f.codigo_programa = c.codigo_programa
-                JOIN aprendices a ON a.numero_ficha = f.numero_ficha
+                FROM matricula_resultados mr
+                JOIN resultados r ON mr.codigo_resul = r.codigo_resul
+                JOIN competencias c ON r.codigo_comp = c.codigo_comp
+                JOIN aprendices a ON a.numero_documento = mr.num_documento_aprendiz
+                JOIN fichas f ON a.numero_ficha = f.numero_ficha
                 JOIN estados e ON a.id_estado = e.id_estado
-                LEFT JOIN matricula_resultados mr ON mr.codigo_resul = r.codigo_resul AND mr.num_documento_aprendiz = a.numero_documento
                 LEFT JOIN juicios_catalogo jc ON mr.id_juicio_cat = jc.id_juicio_cat
                 $whereClause
                 GROUP BY c.codigo_comp, c.nombre_comp, r.codigo_resul, r.nombre_resultado

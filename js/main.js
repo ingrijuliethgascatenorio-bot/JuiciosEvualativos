@@ -476,7 +476,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
                         let avisoConflictos = (r.conflictos > 0)
                             ? `<div style="background:#fee2e2;border:1px solid #fca5a5;color:#991b1b;padding:8px;border-radius:6px;margin-top:10px;font-size:12px;text-align:left;">
-                                 ⚠️ <strong>Conflictos detectados:</strong> ${r.conflictos} fila(s) correspondían a aprendices asociados a otra ficha y no fueron reasignados.
+                                 ⚠️ <strong>Conflictos detectados:</strong> ${r.conflictos} fila(s) no pudieron ser procesadas o presentaron inconsistencias.
                                </div>`
                             : '';
 

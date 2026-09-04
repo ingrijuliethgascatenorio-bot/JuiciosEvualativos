@@ -341,7 +341,6 @@ if (!function_exists('recalcularMetricasFicha')) {
                 JOIN resultados r ON mr.codigo_resul = r.codigo_resul
                 JOIN competencias c ON r.codigo_comp = c.codigo_comp
             ) ON mr.num_documento_aprendiz = a.numero_documento 
-             AND c.codigo_programa = f.codigo_programa
              AND (:id_imp::int IS NULL OR mr.id_importacion = :id_imp)
             WHERE f.numero_ficha = :ficha
               AND e.nombre NOT IN ('RETIRO VOLUNTARIO', 'CANCELADO', 'TRASLADADO', 'APLAZADO')
@@ -725,10 +724,10 @@ try {
     // Sentencias preparadas
     $stmt_ins_estado = $pdo->prepare("INSERT INTO estados (nombre) VALUES (?) RETURNING id_estado");
     $stmt_ins_aprendiz = $pdo->prepare("INSERT INTO aprendices (numero_documento, tipo_documento, nombres, apellidos, id_estado, numero_ficha) VALUES (?, ?, ?, ?, ?, ?)");
-    $stmt_upd_aprendiz = $pdo->prepare("UPDATE aprendices SET tipo_documento = ?, nombres = ?, apellidos = ?, id_estado = ? WHERE numero_documento = ?");
+    $stmt_upd_aprendiz = $pdo->prepare("UPDATE aprendices SET tipo_documento = ?, nombres = ?, apellidos = ?, id_estado = ?, numero_ficha = ? WHERE numero_documento = ?");
     $stmt_ins_corte_ap = $pdo->prepare("INSERT INTO corte_aprendices (id_importacion, numero_documento, id_estado) VALUES (?, ?, ?) ON CONFLICT (id_importacion, numero_documento) DO UPDATE SET id_estado = EXCLUDED.id_estado");
-    $stmt_comp = $pdo->prepare("INSERT INTO competencias (codigo_comp, nombre_comp, codigo_programa) VALUES (?, ?, ?)");
-    $stmt_res = $pdo->prepare("INSERT INTO resultados (codigo_resul, nombre_resultado, codigo_comp) VALUES (?, ?, ?)");
+    $stmt_comp = $pdo->prepare("INSERT INTO competencias (codigo_comp, nombre_comp, codigo_programa) VALUES (?, ?, ?) ON CONFLICT (codigo_comp) DO UPDATE SET nombre_comp = EXCLUDED.nombre_comp");
+    $stmt_res = $pdo->prepare("INSERT INTO resultados (codigo_resul, nombre_resultado, codigo_comp) VALUES (?, ?, ?) ON CONFLICT (codigo_resul) DO UPDATE SET nombre_resultado = EXCLUDED.nombre_resultado");
     $stmt_inst = $pdo->prepare("INSERT INTO instructores (num_documento, nombres_apellidos, cargo) VALUES (?, ?, 'Instructor') ON CONFLICT (num_documento) DO NOTHING");
     $stmt_ins_mat = $pdo->prepare("INSERT INTO matricula_resultados (id_importacion, fecha_reporte, numero_ficha, num_documento_aprendiz, codigo_resul, id_juicio_cat, num_documento_instructor, fecha_registro) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
     $stmt_upd_mat = $pdo->prepare("UPDATE matricula_resultados SET id_juicio_cat = ?, num_documento_instructor = ?, fecha_registro = ? WHERE id = ?");
@@ -790,27 +789,16 @@ try {
 
         $ficha_archivo_norm = normalizarNumeroFicha($ficha);
 
-        // 11.B. Protección de Aprendices contra reasignación
+        // 11.B. Registro / Actualización del Aprendiz para la ficha del reporte
         if (isset($cache_aprendices_db[$num_doc])) {
             $appDb = $cache_aprendices_db[$num_doc];
-            $ficha_db_norm = normalizarNumeroFicha($appDb['numero_ficha']);
-
-            if ($ficha_db_norm !== '' && $ficha_archivo_norm !== '' && $ficha_db_norm !== $ficha_archivo_norm) {
-                $contadores['conflictos']++;
-                if (!isset($aprendicesConflictoRegistrados[$num_doc])) {
-                    $advertencias[] = "El aprendiz $num_doc pertenece a otra ficha ($ficha_db_norm) y no fue reasignado.";
-                    $aprendicesConflictoRegistrados[$num_doc] = true;
-                }
-                continue; // No procesar juicios para este aprendiz en esta ficha
-            } else {
-                // Misma ficha: actualizar datos personales o estado si cambiaron
-                $rawDocTarget = $appDb['raw_doc'] ?? $num_doc;
-                if ($appDb['nombres'] !== $nombres || $appDb['apellidos'] !== $apellidos || $appDb['id_estado'] !== $estado_id) {
-                    $stmt_upd_aprendiz->execute([$tipo_doc, $nombres, $apellidos, $estado_id, $rawDocTarget]);
-                    $cache_aprendices_db[$num_doc]['nombres'] = $nombres;
-                    $cache_aprendices_db[$num_doc]['apellidos'] = $apellidos;
-                    $cache_aprendices_db[$num_doc]['id_estado'] = $estado_id;
-                }
+            $rawDocTarget = $appDb['raw_doc'] ?? $num_doc;
+            if ($appDb['nombres'] !== $nombres || $appDb['apellidos'] !== $apellidos || $appDb['id_estado'] !== $estado_id || ($appDb['numero_ficha'] ?? '') !== $ficha_archivo_norm) {
+                $stmt_upd_aprendiz->execute([$tipo_doc, $nombres, $apellidos, $estado_id, (int)$ficha, $rawDocTarget]);
+                $cache_aprendices_db[$num_doc]['nombres'] = $nombres;
+                $cache_aprendices_db[$num_doc]['apellidos'] = $apellidos;
+                $cache_aprendices_db[$num_doc]['id_estado'] = $estado_id;
+                $cache_aprendices_db[$num_doc]['numero_ficha'] = $ficha_archivo_norm;
             }
         } else {
             $stmt_ins_aprendiz->execute([$num_doc, $tipo_doc, $nombres, $apellidos, $estado_id, (int)$ficha]);
@@ -826,7 +814,7 @@ try {
         // Acumular estado del aprendiz para este corte (se insertará en un solo lote al final)
         $corteAprendicesBatch[$num_doc] = $estado_id;
 
-        // 11.C. Competencia (Sin crc32, validando relación con el programa)
+        // 11.C. Competencia (Soporta transversales y específicas)
         $raw_comp = getCol($data, $colMap, 'nom_comp', '');
         if (empty($raw_comp)) {
             $contadores['conflictos']++;
@@ -855,14 +843,7 @@ try {
             continue;
         }
 
-        if (isset($cache_comp_programa[$cod_comp])) {
-            $prog_comp = $cache_comp_programa[$cod_comp];
-            if ($prog_comp !== $cod_programa) {
-                $contadores['conflictos']++;
-                $advertencias[] = "La competencia $cod_comp está asociada al programa $prog_comp y no al programa $cod_programa de la ficha. Conflicto estructural.";
-                continue;
-            }
-        } else {
+        if (!isset($cache_comp_programa[$cod_comp])) {
             $stmt_comp->execute([$cod_comp, $nom_comp, $cod_programa]);
             $cache_comp_programa[$cod_comp] = $cod_programa;
             $cache_comp_por_nombre[normalizarTexto($nom_comp)][$cod_programa] = $cod_comp;
@@ -897,14 +878,7 @@ try {
             continue;
         }
 
-        if (isset($cache_resul_comp[$cod_resul])) {
-            $comp_resul = $cache_resul_comp[$cod_resul];
-            if ($comp_resul !== $cod_comp) {
-                $contadores['conflictos']++;
-                $advertencias[] = "El resultado $cod_resul está asignado a la competencia $comp_resul y no a $cod_comp. Conflicto estructural.";
-                continue;
-            }
-        } else {
+        if (!isset($cache_resul_comp[$cod_resul])) {
             $stmt_res->execute([$cod_resul, $nom_resul, $cod_comp]);
             $cache_resul_comp[$cod_resul] = $cod_comp;
             $cache_resul_por_nombre[$cod_comp][normalizarTexto($nom_resul)] = $cod_resul;
