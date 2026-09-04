@@ -85,7 +85,15 @@
                     <form id="filtersForm" class="filters-grid">
                         <div class="form-group">
                             <label>Número de Ficha</label>
-                            <input type="text" name="ficha" id="ficha" class="form-control" placeholder="Ej: 2501234">
+                            <select name="ficha" id="ficha" class="form-control">
+                                <option value="">Todas las fichas</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Corte / Fecha del reporte</label>
+                            <select name="fecha_reporte" id="fecha_reporte" class="form-control" disabled>
+                                <option value="">Seleccione una ficha para consultar los cortes</option>
+                            </select>
                         </div>
                         <div class="form-group">
                             <label>Estado Aprendiz</label>

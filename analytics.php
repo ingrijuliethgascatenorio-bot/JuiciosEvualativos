@@ -38,8 +38,11 @@
         <header class="topbar">
             <h1>Inteligencia Académica</h1>
             <div class="topbar-actions">
-                <select id="filtroFicha" class="form-control" style="width:180px;" onchange="cargarTodo()">
+                <select id="filtroFicha" class="form-control" style="width:180px;" onchange="onFichaChange()">
                     <option value="">Todas las fichas</option>
+                </select>
+                <select id="filtroFecha" class="form-control" style="width:220px;" onchange="onFechaChange()" disabled>
+                    <option value="">Seleccione una ficha para consultar los cortes</option>
                 </select>
                 <button onclick="cargarTodo()" class="btn btn-primary">
                     <i data-lucide="refresh-cw" style="width:14px;height:14px;"></i> Actualizar

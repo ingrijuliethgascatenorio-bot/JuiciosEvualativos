@@ -73,10 +73,10 @@ if (!function_exists('parseFechaCorte')) {
         $raw = trim($raw);
         if ($raw === '' || $raw === '-') return null;
         
-        if (preg_match('/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/', $raw, $m)) {
+        if (preg_match('/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/', $raw, $m)) {
             return sprintf('%04d-%02d-%02d', $m[3], $m[2], $m[1]);
         }
-        if (preg_match('/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})/', $raw, $m)) {
+        if (preg_match('/(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})/', $raw, $m)) {
             return sprintf('%04d-%02d-%02d', $m[1], $m[2], $m[3]);
         }
         if (is_numeric($raw)) {
@@ -133,9 +133,21 @@ if (!function_exists('normalizarDocumentoAprendiz')) {
 }
 
 if (!function_exists('recalcularMetricasFicha')) {
-    function recalcularMetricasFicha(PDO $pdo, int $numeroFicha): array {
+    function recalcularMetricasFicha(PDO $pdo, int $numeroFicha, ?int $idImportacion = null): array {
+        if ($idImportacion === null) {
+            $stmtLatest = $pdo->prepare("
+                SELECT id 
+                FROM historial_importaciones 
+                WHERE numero_ficha = :ficha AND estado = 'EXITOSO' 
+                ORDER BY fecha_reporte DESC, fecha_importacion DESC 
+                LIMIT 1
+            ");
+            $stmtLatest->execute([':ficha' => $numeroFicha]);
+            $idImportacion = (int)$stmtLatest->fetchColumn() ?: null;
+        }
+
         $sql = "
-            SELECT
+            SELECT 
                 COUNT(DISTINCT a.numero_documento)                                         AS total_aprendices,
                 COUNT(mr.id)                                                               AS total_asignaciones,
                 COUNT(mr.id) FILTER (WHERE jc.descripcion = 'APROBADO')                   AS total_aprobados,
@@ -163,13 +175,15 @@ if (!function_exists('recalcularMetricasFicha')) {
                 JOIN juicios_catalogo jc ON jc.id_juicio_cat = mr.id_juicio_cat
                 JOIN resultados r ON mr.codigo_resul = r.codigo_resul
                 JOIN competencias c ON r.codigo_comp = c.codigo_comp
-            ) ON mr.num_documento_aprendiz = a.numero_documento AND c.codigo_programa = f.codigo_programa
+            ) ON mr.num_documento_aprendiz = a.numero_documento 
+             AND c.codigo_programa = f.codigo_programa
+             AND (:id_imp::int IS NULL OR mr.id_importacion = :id_imp)
             WHERE f.numero_ficha = :ficha
               AND e.nombre NOT IN ('RETIRO VOLUNTARIO', 'CANCELADO', 'TRASLADADO', 'APLAZADO')
             GROUP BY f.numero_ficha
         ";
         $stmt = $pdo->prepare($sql);
-        $stmt->execute([':ficha' => $numeroFicha]);
+        $stmt->execute([':ficha' => $numeroFicha, ':id_imp' => $idImportacion]);
         $res = $stmt->fetch(PDO::FETCH_ASSOC);
 
         $avance = $res ? (float)$res['porcentaje_avance'] : 0.0;
@@ -334,8 +348,12 @@ try {
                 if (!isset($tempMap['apellidos'])) $tempMap['apellidos'] = $c;
             } elseif (strpos($headerName, 'ESTADO') !== false && strpos($headerName, 'FICHA') === false) {
                 if (!isset($tempMap['estado'])) $tempMap['estado'] = $c;
+            } elseif (strpos($headerName, 'CODIGO') !== false && strpos($headerName, 'COMP') !== false) {
+                $tempMap['cod_comp'] = $c;
             } elseif (strpos($headerName, 'COMPETENCIA') !== false) {
                 if (!isset($tempMap['nom_comp'])) $tempMap['nom_comp'] = $c;
+            } elseif (strpos($headerName, 'CODIGO') !== false && strpos($headerName, 'RESUL') !== false) {
+                $tempMap['cod_resul'] = $c;
             } elseif (strpos($headerName, 'RESULTADO') !== false) {
                 if (!isset($tempMap['nom_resul'])) $tempMap['nom_resul'] = $c;
             } elseif (strpos($headerName, 'JUICIO') !== false) {
@@ -443,6 +461,44 @@ try {
     // 7. Iniciar Transacción Atómica
     $pdo->beginTransaction();
 
+    // 7.1. Crear o resolver corte histórico en historial_importaciones
+    $stmt_corte_fecha = $pdo->prepare("
+        SELECT id, hash_archivo, nombre_archivo 
+        FROM historial_importaciones 
+        WHERE numero_ficha = :ficha AND fecha_reporte = :fecha 
+        ORDER BY id DESC LIMIT 1
+    ");
+    $stmt_corte_fecha->execute([':ficha' => $ficha, ':fecha' => $fecha_reporte]);
+    $corteExistenteFecha = $stmt_corte_fecha->fetch(PDO::FETCH_ASSOC);
+
+    if ($corteExistenteFecha) {
+        // CASO D: Misma ficha + misma fecha + archivo diferente (actualizar corte de esta fecha)
+        $id_importacion = (int)$corteExistenteFecha['id'];
+        $modo = 'ACTUALIZACION_CORTE';
+
+        // Limpiar únicamente los juicios y estados de ESTE corte específico para sobreescribirlo limpiamente
+        $pdo->prepare("DELETE FROM matricula_resultados WHERE id_importacion = ?")->execute([$id_importacion]);
+        $pdo->prepare("DELETE FROM corte_aprendices WHERE id_importacion = ?")->execute([$id_importacion]);
+
+        $pdo->prepare("
+            UPDATE historial_importaciones 
+            SET nombre_archivo = ?, hash_archivo = ?, fecha_importacion = NOW(), modo_procesamiento = ?, estado = 'PROCESANDO', mensaje = 'Actualizando corte existente'
+            WHERE id = ?
+        ")->execute([$fileName, $fileHash, $modo, $id_importacion]);
+    } else {
+        // CASO A / B: Nuevo corte histórico para esta fecha
+        $modo = ($fecha_bd && $fecha_reporte < $fecha_bd) ? 'CORTE_HISTORICO_ANTERIOR' : 'NUEVO_CORTE';
+        $stmt_crear_corte = $pdo->prepare("
+            INSERT INTO historial_importaciones (
+                numero_ficha, fecha_reporte, fecha_importacion, nombre_archivo, hash_archivo,
+                modo_procesamiento, estado, mensaje
+            ) VALUES (?, ?, NOW(), ?, ?, ?, 'PROCESANDO', 'Importando nuevo corte')
+            RETURNING id
+        ");
+        $stmt_crear_corte->execute([$ficha, $fecha_reporte, $fileName, $fileHash, $modo]);
+        $id_importacion = (int)$stmt_crear_corte->fetchColumn();
+    }
+
     // 8. Upsert Programa (Identidad estrictamente codigo_programa)
     $stmt_prog = $pdo->prepare("
         INSERT INTO programas (codigo_programa, nombre_programa, version, modalidad)
@@ -463,28 +519,20 @@ try {
         ");
         $stmt_ins_f->execute([$ficha, $cod_programa, $fecha_inicio, $fecha_fin, $estado_ficha, $fecha_reporte]);
     } else {
-        if ($modo === 'SELECTIVO_HISTÓRICO') {
-            $stmt_upd_f = $pdo->prepare("
-                UPDATE fichas SET 
-                    codigo_programa = ?,
-                    fecha_inicio = COALESCE(fecha_inicio, ?),
-                    fecha_fin = COALESCE(fecha_fin, ?),
-                    estado_ficha = COALESCE(?, estado_ficha)
-                WHERE numero_ficha = ?
-            ");
-            $stmt_upd_f->execute([$cod_programa, $fecha_inicio, $fecha_fin, $estado_ficha, $ficha]);
-        } else {
-            $stmt_upd_f = $pdo->prepare("
-                UPDATE fichas SET 
-                    codigo_programa = ?,
-                    fecha_inicio = COALESCE(?, fecha_inicio),
-                    fecha_fin = COALESCE(?, fecha_fin),
-                    estado_ficha = ?,
-                    fecha_reporte = ?
-                WHERE numero_ficha = ?
-            ");
-            $stmt_upd_f->execute([$cod_programa, $fecha_inicio, $fecha_fin, $estado_ficha, $fecha_reporte, $ficha]);
-        }
+        // Solo actualizar fecha_reporte en fichas si la fecha importada es igual o más reciente
+        $debeActualizarFechaFicha = (!$fecha_bd || $fecha_reporte >= $fecha_bd);
+        $nuevaFechaFicha = $debeActualizarFechaFicha ? $fecha_reporte : $fecha_bd;
+
+        $stmt_upd_f = $pdo->prepare("
+            UPDATE fichas SET 
+                codigo_programa = ?,
+                fecha_inicio = COALESCE(?, fecha_inicio),
+                fecha_fin = COALESCE(?, fecha_fin),
+                estado_ficha = ?,
+                fecha_reporte = ?
+            WHERE numero_ficha = ?
+        ");
+        $stmt_upd_f->execute([$cod_programa, $fecha_inicio, $fecha_fin, $estado_ficha, $nuevaFechaFicha, $ficha]);
     }
 
     // 10. Pre-carga y Validación de Catálogos
@@ -517,17 +565,16 @@ try {
         ];
     }
 
-    // Pre-cargar juicios existentes de esta ficha
+    // Pre-cargar juicios existentes de ESTE corte específico (para Caso D)
     $cache_matriculas = [];
     $stmt_mat_ficha = $pdo->prepare("
         SELECT mr.id, mr.num_documento_aprendiz, mr.codigo_resul, mr.id_juicio_cat, 
                UPPER(jc.descripcion) as juicio_nombre, mr.fecha_registro, mr.num_documento_instructor
         FROM matricula_resultados mr
-        JOIN aprendices a ON mr.num_documento_aprendiz = a.numero_documento
         JOIN juicios_catalogo jc ON mr.id_juicio_cat = jc.id_juicio_cat
-        WHERE a.numero_ficha = ?
+        WHERE mr.id_importacion = ?
     ");
-    $stmt_mat_ficha->execute([$ficha]);
+    $stmt_mat_ficha->execute([$id_importacion]);
     while ($mRow = $stmt_mat_ficha->fetch(PDO::FETCH_ASSOC)) {
         $doc = normalizarDocumentoAprendiz($mRow['num_documento_aprendiz']);
         $res = (int)$mRow['codigo_resul'];
@@ -571,10 +618,11 @@ try {
     $stmt_ins_estado = $pdo->prepare("INSERT INTO estados (nombre) VALUES (?) RETURNING id_estado");
     $stmt_ins_aprendiz = $pdo->prepare("INSERT INTO aprendices (numero_documento, tipo_documento, nombres, apellidos, id_estado, numero_ficha) VALUES (?, ?, ?, ?, ?, ?)");
     $stmt_upd_aprendiz = $pdo->prepare("UPDATE aprendices SET tipo_documento = ?, nombres = ?, apellidos = ?, id_estado = ? WHERE numero_documento = ?");
+    $stmt_ins_corte_ap = $pdo->prepare("INSERT INTO corte_aprendices (id_importacion, numero_documento, id_estado) VALUES (?, ?, ?) ON CONFLICT (id_importacion, numero_documento) DO UPDATE SET id_estado = EXCLUDED.id_estado");
     $stmt_comp = $pdo->prepare("INSERT INTO competencias (codigo_comp, nombre_comp, codigo_programa) VALUES (?, ?, ?)");
     $stmt_res = $pdo->prepare("INSERT INTO resultados (codigo_resul, nombre_resultado, codigo_comp) VALUES (?, ?, ?)");
     $stmt_inst = $pdo->prepare("INSERT INTO instructores (num_documento, nombres_apellidos, cargo) VALUES (?, ?, 'Instructor') ON CONFLICT (num_documento) DO NOTHING");
-    $stmt_ins_mat = $pdo->prepare("INSERT INTO matricula_resultados (num_documento_aprendiz, codigo_resul, id_juicio_cat, num_documento_instructor, fecha_registro) VALUES (?, ?, ?, ?, ?)");
+    $stmt_ins_mat = $pdo->prepare("INSERT INTO matricula_resultados (id_importacion, fecha_reporte, numero_ficha, num_documento_aprendiz, codigo_resul, id_juicio_cat, num_documento_instructor, fecha_registro) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
     $stmt_upd_mat = $pdo->prepare("UPDATE matricula_resultados SET id_juicio_cat = ?, num_documento_instructor = ?, fecha_registro = ? WHERE id = ?");
 
     // Contadores del resumen
@@ -650,6 +698,9 @@ try {
             ];
         }
 
+        // Guardar estado histórico del aprendiz para este corte
+        $stmt_ins_corte_ap->execute([$id_importacion, $num_doc, $estado_id]);
+
         // 11.C. Competencia (Sin crc32, validando relación con el programa)
         $raw_comp = getCol($data, $colMap, 'nom_comp', '');
         if (empty($raw_comp)) {
@@ -657,10 +708,15 @@ try {
             $advertencias[] = "Competencia vacía para el aprendiz $num_doc. Fila omitida.";
             continue;
         }
+        $raw_cod_comp = getCol($data, $colMap, 'cod_comp', '');
         list($cod_comp_str, $nom_comp) = splitCodeName($raw_comp);
         $cod_comp = null;
-        if (is_numeric($cod_comp_str)) {
+        if (is_numeric($raw_cod_comp) && (int)$raw_cod_comp > 0) {
+            $cod_comp = (int)$raw_cod_comp;
+        } elseif (is_numeric($cod_comp_str) && (int)$cod_comp_str > 0) {
             $cod_comp = (int)$cod_comp_str;
+        } elseif (is_numeric($raw_comp) && (int)$raw_comp > 0) {
+            $cod_comp = (int)$raw_comp;
         } else {
             $nom_comp_clean = normalizarTexto($nom_comp);
             if (isset($cache_comp_por_nombre[$nom_comp_clean][$cod_programa])) {
@@ -696,10 +752,15 @@ try {
             $advertencias[] = "Resultado de aprendizaje vacío para el aprendiz $num_doc. Fila omitida.";
             continue;
         }
+        $raw_cod_resul = getCol($data, $colMap, 'cod_resul', '');
         list($cod_resul_str, $nom_resul) = splitCodeName($raw_resul);
         $cod_resul = null;
-        if (is_numeric($cod_resul_str)) {
+        if (is_numeric($raw_cod_resul) && (int)$raw_cod_resul > 0) {
+            $cod_resul = (int)$raw_cod_resul;
+        } elseif (is_numeric($cod_resul_str) && (int)$cod_resul_str > 0) {
             $cod_resul = (int)$cod_resul_str;
+        } elseif (is_numeric($raw_resul) && (int)$raw_resul > 0) {
+            $cod_resul = (int)$raw_resul;
         } else {
             $nom_resul_clean = normalizarTexto($nom_resul);
             if (isset($cache_resul_por_nombre[$cod_comp][$nom_resul_clean])) {
@@ -758,7 +819,7 @@ try {
                 $fecha_a_guardar = $fecha_reporte . ' 00:00:00';
             }
 
-            $stmt_ins_mat->execute([$num_doc, $cod_resul, $juicio_id, $doc_instructor, $fecha_a_guardar]);
+            $stmt_ins_mat->execute([$id_importacion, $fecha_reporte, (int)$ficha, $num_doc, $cod_resul, $juicio_id, $doc_instructor, $fecha_a_guardar]);
             $cache_matriculas[$num_doc][$cod_resul] = [
                 'id'             => (int)$pdo->lastInsertId('matricula_resultados_id_seq'),
                 'id_juicio_cat'  => $juicio_id,
@@ -815,23 +876,21 @@ try {
         }
     }
 
-    // 12. Recalcular Métricas de la Ficha
-    $metricas = recalcularMetricasFicha($pdo, $ficha);
-
-    // 13. Registrar en historial_importaciones
-    $stmt_hist = $pdo->prepare("
-        INSERT INTO historial_importaciones (
-            numero_ficha, fecha_reporte, nombre_archivo, hash_archivo,
-            total_filas, registros_nuevos, registros_actualizados, registros_sin_cambios,
-            registros_omitidos, registros_conflicto, modo_procesamiento, estado, mensaje
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'EXITOSO', ?)
+    // 12. Actualizar registro en historial_importaciones con métricas finales del corte
+    $stmt_upd_hist = $pdo->prepare("
+        UPDATE historial_importaciones SET
+            total_filas = ?, registros_nuevos = ?, registros_actualizados = ?, registros_sin_cambios = ?,
+            registros_omitidos = ?, registros_conflicto = ?, modo_procesamiento = ?, estado = 'EXITOSO', mensaje = ?
+        WHERE id = ?
     ");
     $msgHistorial = "Procesamiento $modo completado exitosamente.";
-    $stmt_hist->execute([
-        $ficha, $fecha_reporte, $fileName, $fileHash,
+    $stmt_upd_hist->execute([
         $contadores['total'], $contadores['nuevos'], $contadores['actualizados'], $contadores['sin_cambios'],
-        $contadores['omitidos'], $contadores['conflictos'], $modo, $msgHistorial
+        $contadores['omitidos'], $contadores['conflictos'], $modo, $msgHistorial, $id_importacion
     ]);
+
+    // 13. Recalcular Métricas de la Ficha para este corte
+    $metricas = recalcularMetricasFicha($pdo, $ficha, $id_importacion);
 
     // 14. Confirmar Transacción
     $pdo->commit();
@@ -842,6 +901,7 @@ try {
         : "Importación completada exitosamente para la ficha $ficha (corte: $fecha_reporte).";
 
     $resumenObj = [
+        'id_importacion'         => $id_importacion,
         'ficha'                  => $ficha,
         'fecha_reporte'          => $fecha_reporte,
         'total_filas'            => $contadores['total'],

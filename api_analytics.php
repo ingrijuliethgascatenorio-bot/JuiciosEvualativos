@@ -16,30 +16,45 @@ require 'db.php';
 header('Content-Type: application/json; charset=utf-8');
 
 $action = $_GET['action'] ?? 'inteligencia';
-$ficha  = $_GET['ficha']  ?? '';
+$ficha  = trim($_GET['ficha']  ?? '');
+$fecha_reporte = trim($_GET['fecha_reporte'] ?? '');
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
+
+function resolverCorte(PDO $pdo, string $ficha, string $fecha_reporte = ''): ?int {
+    if ($ficha === '') return null;
+    if ($fecha_reporte !== '') {
+        $stmt = $pdo->prepare("SELECT id FROM historial_importaciones WHERE numero_ficha = :ficha AND fecha_reporte = :fecha AND estado = 'EXITOSO' ORDER BY id DESC LIMIT 1");
+        $stmt->execute([':ficha' => (int)$ficha, ':fecha' => $fecha_reporte]);
+    } else {
+        $stmt = $pdo->prepare("SELECT id FROM historial_importaciones WHERE numero_ficha = :ficha AND estado = 'EXITOSO' ORDER BY fecha_reporte DESC, fecha_importacion DESC LIMIT 1");
+        $stmt->execute([':ficha' => (int)$ficha]);
+    }
+    $val = $stmt->fetchColumn();
+    return $val !== false ? (int)$val : null;
+}
+
+$id_corte = resolverCorte($pdo, $ficha, $fecha_reporte);
 
 /**
  * Condición SQL que excluye a los aprendices que ya no están activos
  * (retirados, cancelados, trasladados, aplazados) de las estadísticas de avance.
- * Requiere que la consulta tenga un JOIN a "estados e" sobre el aprendiz.
  */
 function estadoActivoCondicion(): string {
-    return "e.nombre NOT IN ('RETIRO VOLUNTARIO', 'CANCELADO', 'TRASLADADO', 'APLAZADO')";
+    return "COALESCE(e_corte.nombre, e.nombre) NOT IN ('RETIRO VOLUNTARIO', 'CANCELADO', 'TRASLADADO', 'APLAZADO')";
 }
 
 /**
  * Construye la cláusula WHERE y devuelve [string_where, array_params]
  * Filtra por ficha y excluye a los inactivos por defecto.
  */
-function buildWhere(string $ficha, string $alias = 'a'): array {
+function buildWhere(string $ficha, ?int $idCorte, string $alias = 'a'): array {
     $where  = [estadoActivoCondicion()];
-    $params = [];
+    $params = [':id_corte' => $idCorte];
 
     if ($ficha !== '') {
         $where[]  = "{$alias}.numero_ficha = :ficha";
-        $params[':ficha'] = $ficha;
+        $params[':ficha'] = (int)$ficha;
     }
 
     return ['WHERE ' . implode(' AND ', $where), $params];
@@ -71,8 +86,8 @@ function jsonError(string $msg): void {
 // ══════════════════════════════════════════════════════════════════════════════
 // 1. RIESGO ACADÉMICO
 // ══════════════════════════════════════════════════════════════════════════════
-function getRiesgoAcademico(PDO $pdo, string $ficha): array {
-    [$where, $params] = buildWhere($ficha);
+function getRiesgoAcademico(PDO $pdo, string $ficha, ?int $idCorte): array {
+    [$where, $params] = buildWhere($ficha, $idCorte);
 
     $sql = "
         SELECT
@@ -93,12 +108,12 @@ function getRiesgoAcademico(PDO $pdo, string $ficha): array {
         FROM aprendices a
         JOIN fichas f ON a.numero_ficha = f.numero_ficha
         JOIN estados e ON a.id_estado = e.id_estado
+        LEFT JOIN corte_aprendices ca ON ca.id_importacion = :id_corte AND ca.numero_documento = a.numero_documento
+        LEFT JOIN estados e_corte ON e_corte.id_estado = ca.id_estado
         LEFT JOIN matricula_resultados mr
-               ON mr.num_documento_aprendiz = a.numero_documento
+               ON mr.num_documento_aprendiz = a.numero_documento AND (:id_corte::int IS NULL OR mr.id_importacion = :id_corte)
         LEFT JOIN juicios_catalogo jc
                ON jc.id_juicio_cat = mr.id_juicio_cat
-        LEFT JOIN resultados r ON mr.codigo_resul = r.codigo_resul
-        LEFT JOIN competencias c ON r.codigo_comp = c.codigo_comp AND c.codigo_programa = f.codigo_programa
         $where
         GROUP BY a.numero_documento, a.nombres, a.apellidos, a.numero_ficha
         ORDER BY pendientes DESC, porcentaje_avance ASC
@@ -136,8 +151,8 @@ function getRiesgoAcademico(PDO $pdo, string $ficha): array {
 // ══════════════════════════════════════════════════════════════════════════════
 // 2. RANKING DE APRENDICES
 // ══════════════════════════════════════════════════════════════════════════════
-function getRanking(PDO $pdo, string $ficha): array {
-    [$where, $params] = buildWhere($ficha);
+function getRanking(PDO $pdo, string $ficha, ?int $idCorte): array {
+    [$where, $params] = buildWhere($ficha, $idCorte);
 
     $sql = "
         SELECT
@@ -157,12 +172,12 @@ function getRanking(PDO $pdo, string $ficha): array {
         FROM aprendices a
         JOIN fichas f ON a.numero_ficha = f.numero_ficha
         JOIN estados e ON a.id_estado = e.id_estado
+        LEFT JOIN corte_aprendices ca ON ca.id_importacion = :id_corte AND ca.numero_documento = a.numero_documento
+        LEFT JOIN estados e_corte ON e_corte.id_estado = ca.id_estado
         LEFT JOIN matricula_resultados mr
-               ON mr.num_documento_aprendiz = a.numero_documento
+               ON mr.num_documento_aprendiz = a.numero_documento AND (:id_corte::int IS NULL OR mr.id_importacion = :id_corte)
         LEFT JOIN juicios_catalogo jc
                ON jc.id_juicio_cat = mr.id_juicio_cat
-        LEFT JOIN resultados r ON mr.codigo_resul = r.codigo_resul
-        LEFT JOIN competencias c ON r.codigo_comp = c.codigo_comp AND c.codigo_programa = f.codigo_programa
         $where
         GROUP BY a.numero_documento, a.nombres, a.apellidos, a.numero_ficha
         ORDER BY porcentaje_avance DESC, aprobados DESC
@@ -195,16 +210,18 @@ function getRanking(PDO $pdo, string $ficha): array {
 // ══════════════════════════════════════════════════════════════════════════════
 // 3. SEMÁFORO DE COMPETENCIAS
 // ══════════════════════════════════════════════════════════════════════════════
-function getSemaforoCompetencias(PDO $pdo, string $ficha): array {
+function getSemaforoCompetencias(PDO $pdo, string $ficha, ?int $idCorte): array {
     $where  = [estadoActivoCondicion()];
-    $params = [];
+    $params = [':id_corte' => $idCorte];
 
-    if ($ficha !== '') {
-        $where[]          = 'f.numero_ficha = :ficha';
-        $params[':ficha'] = $ficha;
+    if ($idCorte !== null) {
+        $where[] = "mr.id_importacion = :id_corte";
+    } elseif ($ficha !== '') {
+        $where[] = 'a.numero_ficha = :ficha';
+        $params[':ficha'] = (int)$ficha;
     }
 
-    $whereClause = $where ? 'WHERE ' . implode(' AND ', $where) : '';
+    $whereClause = 'WHERE ' . implode(' AND ', $where);
 
     $sql = "
         SELECT
@@ -219,13 +236,14 @@ function getSemaforoCompetencias(PDO $pdo, string $ficha): array {
                     / COUNT(mr.id)) * 100, 2
                 )
             END AS porcentaje_aprobacion
-        FROM competencias c
-        JOIN fichas f ON f.codigo_programa = c.codigo_programa
-        JOIN resultados r ON r.codigo_comp = c.codigo_comp
-        LEFT JOIN aprendices a ON a.numero_ficha = f.numero_ficha
-        LEFT JOIN estados e ON e.id_estado = a.id_estado
-        LEFT JOIN matricula_resultados mr ON mr.codigo_resul = r.codigo_resul AND mr.num_documento_aprendiz = a.numero_documento
-        LEFT JOIN juicios_catalogo jc ON jc.id_juicio_cat = mr.id_juicio_cat
+        FROM matricula_resultados mr
+        JOIN resultados r ON mr.codigo_resul = r.codigo_resul
+        JOIN competencias c ON r.codigo_comp = c.codigo_comp
+        JOIN aprendices a ON a.numero_documento = mr.num_documento_aprendiz
+        LEFT JOIN corte_aprendices ca ON ca.id_importacion = mr.id_importacion AND ca.numero_documento = a.numero_documento
+        LEFT JOIN estados e_corte ON e_corte.id_estado = ca.id_estado
+        JOIN estados e ON a.id_estado = e.id_estado
+        JOIN juicios_catalogo jc ON jc.id_juicio_cat = mr.id_juicio_cat
         $whereClause
         GROUP BY c.codigo_comp, c.nombre_comp
         ORDER BY porcentaje_aprobacion ASC
@@ -259,11 +277,11 @@ function getSemaforoCompetencias(PDO $pdo, string $ficha): array {
 // ══════════════════════════════════════════════════════════════════════════════
 // 4. CENTRO DE ALERTAS
 // ══════════════════════════════════════════════════════════════════════════════
-function getAlertas(PDO $pdo, string $ficha): array {
+function getAlertas(PDO $pdo, string $ficha, ?int $idCorte): array {
     $alertas = [];
 
     // ── Alertas riesgo ALTO ───────────────────────────────────────────────────
-    [$where, $params] = buildWhere($ficha);
+    [$where, $params] = buildWhere($ficha, $idCorte);
 
     $sql = "
         SELECT
@@ -274,8 +292,10 @@ function getAlertas(PDO $pdo, string $ficha): array {
             COUNT(mr.id) FILTER (WHERE jc.descripcion = 'POR EVALUAR') AS pendientes
         FROM aprendices a
         JOIN estados e ON a.id_estado = e.id_estado
+        LEFT JOIN corte_aprendices ca ON ca.id_importacion = :id_corte AND ca.numero_documento = a.numero_documento
+        LEFT JOIN estados e_corte ON e_corte.id_estado = ca.id_estado
         LEFT JOIN matricula_resultados mr
-               ON mr.num_documento_aprendiz = a.numero_documento
+               ON mr.num_documento_aprendiz = a.numero_documento AND (:id_corte::int IS NULL OR mr.id_importacion = :id_corte)
         LEFT JOIN juicios_catalogo jc ON jc.id_juicio_cat = mr.id_juicio_cat
         $where
         GROUP BY a.numero_documento, a.nombres, a.apellidos, a.numero_ficha
@@ -295,7 +315,7 @@ function getAlertas(PDO $pdo, string $ficha): array {
     }
 
     // ── Alertas competencias ROJO ─────────────────────────────────────────────
-    $semaforo = getSemaforoCompetencias($pdo, $ficha);
+    $semaforo = getSemaforoCompetencias($pdo, $ficha, $idCorte);
     foreach ($semaforo['competencias'] as $c) {
         if ($c['estado'] === 'ROJO') {
             $alertas[] = [
@@ -309,7 +329,7 @@ function getAlertas(PDO $pdo, string $ficha): array {
     }
 
     // ── Alertas fichas con bajo avance ────────────────────────────────────────
-    $estadisticas = getEstadisticasFicha($pdo, $ficha);
+    $estadisticas = getEstadisticasFicha($pdo, $ficha, $idCorte);
     foreach ($estadisticas as $f) {
         if ($f['porcentaje_avance'] < 40 && $f['total_asignaciones'] > 0) {
             $alertas[] = [
@@ -336,57 +356,93 @@ function getAlertas(PDO $pdo, string $ficha): array {
 // ══════════════════════════════════════════════════════════════════════════════
 // 5. ESTADÍSTICAS POR FICHA
 // ══════════════════════════════════════════════════════════════════════════════
-function getEstadisticasFicha(PDO $pdo, string $ficha): array {
-    $where  = [estadoActivoCondicion()];
-    $params = [];
+function getEstadisticasFicha(PDO $pdo, string $ficha, ?int $idCorte): array {
+    if ($idCorte !== null && $ficha !== '') {
+        $sql = "
+            SELECT
+                f.numero_ficha,
+                p.nombre_programa,
+                COUNT(DISTINCT a.numero_documento)                            AS total_aprendices,
+                COUNT(mr.id)                                                  AS total_asignaciones,
+                COUNT(mr.id) FILTER (WHERE jc.descripcion = 'APROBADO')      AS total_aprobados,
+                COUNT(mr.id) FILTER (WHERE jc.descripcion = 'POR EVALUAR')   AS total_pendientes,
+                CASE
+                    WHEN COUNT(mr.id) = 0 THEN 0
+                    ELSE ROUND(
+                        (COUNT(mr.id) FILTER (WHERE jc.descripcion = 'APROBADO')::numeric
+                        / COUNT(mr.id)) * 100, 2
+                    )
+                END AS porcentaje_avance,
+                CASE
+                    WHEN COUNT(DISTINCT a.numero_documento) = 0 THEN 0
+                    ELSE ROUND(
+                        (COUNT(DISTINCT CASE WHEN jc.descripcion = 'APROBADO'
+                            THEN a.numero_documento END)::numeric
+                        / COUNT(DISTINCT a.numero_documento)) * 100, 2
+                    )
+                END AS porcentaje_aprobacion
+            FROM fichas f
+            JOIN programas p ON p.codigo_programa = f.codigo_programa
+            JOIN aprendices a ON a.numero_ficha = f.numero_ficha
+            JOIN estados e ON e.id_estado = a.id_estado
+            LEFT JOIN corte_aprendices ca ON ca.id_importacion = :id_corte AND ca.numero_documento = a.numero_documento
+            LEFT JOIN estados e_corte ON e_corte.id_estado = ca.id_estado
+            LEFT JOIN matricula_resultados mr ON mr.num_documento_aprendiz = a.numero_documento AND mr.id_importacion = :id_corte
+            LEFT JOIN juicios_catalogo jc ON jc.id_juicio_cat = mr.id_juicio_cat
+            WHERE f.numero_ficha = :ficha
+              AND COALESCE(e_corte.nombre, e.nombre) NOT IN ('RETIRO VOLUNTARIO', 'CANCELADO', 'TRASLADADO', 'APLAZADO')
+            GROUP BY f.numero_ficha, p.nombre_programa
+            ORDER BY f.numero_ficha
+        ";
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute([':ficha' => (int)$ficha, ':id_corte' => $idCorte]);
+    } else {
+        $where  = ["e.nombre NOT IN ('RETIRO VOLUNTARIO', 'CANCELADO', 'TRASLADADO', 'APLAZADO')"];
+        $params = [];
 
-    if ($ficha !== '') {
-        $where[]          = 'f.numero_ficha = :ficha';
-        $params[':ficha'] = $ficha;
+        if ($ficha !== '') {
+            $where[]          = 'f.numero_ficha = :ficha';
+            $params[':ficha'] = (int)$ficha;
+        }
+
+        $whereClause = 'WHERE ' . implode(' AND ', $where);
+
+        $sql = "
+            SELECT
+                f.numero_ficha,
+                p.nombre_programa,
+                COUNT(DISTINCT a.numero_documento)                            AS total_aprendices,
+                COUNT(mr.id)                                                  AS total_asignaciones,
+                COUNT(mr.id) FILTER (WHERE jc.descripcion = 'APROBADO')      AS total_aprobados,
+                COUNT(mr.id) FILTER (WHERE jc.descripcion = 'POR EVALUAR')   AS total_pendientes,
+                CASE
+                    WHEN COUNT(mr.id) = 0 THEN 0
+                    ELSE ROUND(
+                        (COUNT(mr.id) FILTER (WHERE jc.descripcion = 'APROBADO')::numeric
+                        / COUNT(mr.id)) * 100, 2
+                    )
+                END AS porcentaje_avance,
+                CASE
+                    WHEN COUNT(DISTINCT a.numero_documento) = 0 THEN 0
+                    ELSE ROUND(
+                        (COUNT(DISTINCT CASE WHEN jc.descripcion = 'APROBADO'
+                            THEN a.numero_documento END)::numeric
+                        / COUNT(DISTINCT a.numero_documento)) * 100, 2
+                    )
+                END AS porcentaje_aprobacion
+            FROM fichas f
+            JOIN programas p ON p.codigo_programa = f.codigo_programa
+            JOIN aprendices a ON a.numero_ficha = f.numero_ficha
+            JOIN estados e ON e.id_estado = a.id_estado
+            LEFT JOIN matricula_resultados mr ON mr.num_documento_aprendiz = a.numero_documento
+            LEFT JOIN juicios_catalogo jc ON jc.id_juicio_cat = mr.id_juicio_cat
+            $whereClause
+            GROUP BY f.numero_ficha, p.nombre_programa
+            ORDER BY f.numero_ficha
+        ";
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute($params);
     }
-
-    $whereClause = $where ? 'WHERE ' . implode(' AND ', $where) : '';
-
-    $sql = "
-        SELECT
-            f.numero_ficha,
-            p.nombre_programa,
-            COUNT(DISTINCT a.numero_documento)                            AS total_aprendices,
-            COUNT(mr.id)                                                  AS total_asignaciones,
-            COUNT(mr.id) FILTER (WHERE jc.descripcion = 'APROBADO')      AS total_aprobados,
-            COUNT(mr.id) FILTER (WHERE jc.descripcion = 'POR EVALUAR')   AS total_pendientes,
-            CASE
-                WHEN COUNT(mr.id) = 0 THEN 0
-                ELSE ROUND(
-                    (COUNT(mr.id) FILTER (WHERE jc.descripcion = 'APROBADO')::numeric
-                    / COUNT(mr.id)) * 100, 2
-                )
-            END AS porcentaje_avance,
-            CASE
-                WHEN COUNT(DISTINCT a.numero_documento) = 0 THEN 0
-                ELSE ROUND(
-                    (COUNT(DISTINCT CASE WHEN jc.descripcion = 'APROBADO'
-                        THEN a.numero_documento END)::numeric
-                    / COUNT(DISTINCT a.numero_documento)) * 100, 2
-                )
-            END AS porcentaje_aprobacion
-        FROM fichas f
-        JOIN programas p ON p.codigo_programa = f.codigo_programa
-        JOIN aprendices a ON a.numero_ficha = f.numero_ficha
-        JOIN estados e ON e.id_estado = a.id_estado
-        LEFT JOIN (
-            matricula_resultados mr
-            JOIN juicios_catalogo jc ON jc.id_juicio_cat = mr.id_juicio_cat
-            JOIN resultados r ON mr.codigo_resul = r.codigo_resul
-            JOIN competencias c ON r.codigo_comp = c.codigo_comp
-        ) ON mr.num_documento_aprendiz = a.numero_documento AND c.codigo_programa = f.codigo_programa
-        $whereClause
-        GROUP BY f.numero_ficha, p.nombre_programa
-        ORDER BY f.numero_ficha
-    ";
-
-    $stmt = $pdo->prepare($sql);
-    $stmt->execute($params);
 
     return array_map(fn($r) => [
         'numero_ficha'         => (int)$r['numero_ficha'],
@@ -407,30 +463,31 @@ try {
     switch ($action) {
 
         case 'riesgo_academico':
-            jsonOk(getRiesgoAcademico($pdo, $ficha));
+            jsonOk(getRiesgoAcademico($pdo, $ficha, $id_corte));
 
         case 'ranking':
-            jsonOk(getRanking($pdo, $ficha));
+            jsonOk(getRanking($pdo, $ficha, $id_corte));
 
         case 'semaforo_competencias':
-            jsonOk(getSemaforoCompetencias($pdo, $ficha));
+            jsonOk(getSemaforoCompetencias($pdo, $ficha, $id_corte));
 
         case 'alertas':
-            jsonOk(getAlertas($pdo, $ficha));
+            jsonOk(getAlertas($pdo, $ficha, $id_corte));
 
         case 'estadisticas_ficha':
-            jsonOk(getEstadisticasFicha($pdo, $ficha));
+            jsonOk(getEstadisticasFicha($pdo, $ficha, $id_corte));
 
         case 'inteligencia':
         default:
-            // Dashboard completo en una sola llamada
             jsonOk([
                 'generado_en'       => date('c'),
-                'riesgo_academico'  => getRiesgoAcademico($pdo, $ficha),
-                'ranking'           => getRanking($pdo, $ficha),
-                'semaforo'          => getSemaforoCompetencias($pdo, $ficha),
-                'alertas'           => getAlertas($pdo, $ficha),
-                'estadisticas_ficha'=> getEstadisticasFicha($pdo, $ficha),
+                'id_importacion'    => $id_corte,
+                'fecha_reporte'     => $fecha_reporte,
+                'riesgo_academico'  => getRiesgoAcademico($pdo, $ficha, $id_corte),
+                'ranking'           => getRanking($pdo, $ficha, $id_corte),
+                'semaforo'          => getSemaforoCompetencias($pdo, $ficha, $id_corte),
+                'alertas'           => getAlertas($pdo, $ficha, $id_corte),
+                'estadisticas_ficha'=> getEstadisticasFicha($pdo, $ficha, $id_corte),
             ]);
     }
 } catch (PDOException $e) {

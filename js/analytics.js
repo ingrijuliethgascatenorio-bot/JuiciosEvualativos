@@ -13,17 +13,152 @@ const ITEMS_PER_PAGE = 10;
 let paginaFichas  = 1;
 let paginaRiesgo  = 1;
 
+const CONTEXTO_CORTE_KEY = 'sgje_contexto_corte';
+
+function guardarContextoCorte(ficha, fecha_reporte, seccionOrigen = 'analytics.php') {
+    try {
+        const payload = {
+            ficha: ficha ? String(ficha) : '',
+            fecha_reporte: fecha_reporte ? String(fecha_reporte) : '',
+            seccionOrigen: seccionOrigen
+        };
+        sessionStorage.setItem(CONTEXTO_CORTE_KEY, JSON.stringify(payload));
+    } catch (e) {
+        console.warn('No se pudo guardar contexto en sessionStorage:', e);
+    }
+}
+
+function obtenerContextoCorte() {
+    try {
+        const raw = sessionStorage.getItem(CONTEXTO_CORTE_KEY);
+        if (raw) return JSON.parse(raw);
+    } catch (e) {
+        console.warn('No se pudo leer contexto de sessionStorage:', e);
+    }
+    return null;
+}
+
 // ══════════════════════════════════════════════════════════════════════════════
 // CARGA PRINCIPAL
 // ══════════════════════════════════════════════════════════════════════════════
-document.addEventListener('DOMContentLoaded', () => {
-    cargarFichas();
-    cargarTodo();
+function formatDateDisplay(dateStr) {
+    if (!dateStr || dateStr.length < 10) return dateStr || '';
+    const meses = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
+    const parts = dateStr.substring(0, 10).split('-');
+    if (parts.length === 3) {
+        const m = parseInt(parts[1], 10) - 1;
+        return `${parts[2]} ${meses[m] || parts[1]} ${parts[0]}`;
+    }
+    return dateStr;
+}
+
+async function actualizarFechasAnalytics(ficha, seleccionada = '') {
+    const fechaSel = document.getElementById('filtroFecha');
+    if (!fechaSel) return '';
+
+    if (!ficha) {
+        fechaSel.disabled = true;
+        fechaSel.innerHTML = '<option value="">Seleccione una ficha para consultar los cortes</option>';
+        return '';
+    }
+
+    fechaSel.disabled = true;
+    fechaSel.innerHTML = '<option value="">Cargando cortes...</option>';
+
+    try {
+        const res = await fetch(`api.php?action=get_fechas_ficha&ficha=${encodeURIComponent(ficha)}`).then(r => r.json());
+        if (Array.isArray(res) && res.length > 0) {
+            fechaSel.innerHTML = '';
+            const fechaExiste = seleccionada && res.some(c => c.fecha_reporte === seleccionada);
+            const fechaElegida = fechaExiste ? seleccionada : res[0].fecha_reporte;
+
+            res.forEach((c, idx) => {
+                const opt = document.createElement('option');
+                opt.value = c.fecha_reporte;
+                opt.textContent = idx === 0 
+                    ? `${formatDateDisplay(c.fecha_reporte)} — Último corte` 
+                    : formatDateDisplay(c.fecha_reporte);
+                if (c.fecha_reporte === fechaElegida) opt.selected = true;
+                fechaSel.appendChild(opt);
+            });
+
+            fechaSel.value = fechaElegida;
+            fechaSel.disabled = false;
+            return fechaElegida;
+        } else {
+            fechaSel.innerHTML = '<option value="">Sin cortes registrados</option>';
+            fechaSel.disabled = true;
+            return '';
+        }
+    } catch(e) {
+        console.error('Error cargando fechas en analytics:', e);
+        fechaSel.innerHTML = '<option value="">Error al cargar cortes</option>';
+        fechaSel.disabled = true;
+        return '';
+    }
+}
+
+window.onFichaChange = async function() {
+    const ficha = document.getElementById('filtroFicha')?.value ?? '';
+    const fechaSel = document.getElementById('filtroFecha');
+    if (fechaSel) {
+        fechaSel.disabled = true;
+        fechaSel.innerHTML = '<option value="">Cargando cortes...</option>';
+    }
+    const fechaCargada = await actualizarFechasAnalytics(ficha);
+    guardarContextoCorte(ficha, fechaCargada || '', 'analytics.php');
+    await cargarTodo();
+};
+
+window.onFechaChange = async function() {
+    const ficha = document.getElementById('filtroFicha')?.value ?? '';
+    const fecha = document.getElementById('filtroFecha')?.value ?? '';
+    guardarContextoCorte(ficha, fecha, 'analytics.php');
+    await cargarTodo();
+};
+
+document.addEventListener('DOMContentLoaded', async () => {
+    await cargarFichas();
+
+    const urlParams = new URLSearchParams(window.location.search);
+    const ctx = obtenerContextoCorte();
+
+    let fichaInicial = '';
+    if (urlParams.has('ficha')) {
+        fichaInicial = urlParams.get('ficha') || '';
+    } else if (ctx && ctx.ficha) {
+        fichaInicial = ctx.ficha;
+    }
+
+    let fechaInicial = '';
+    if (urlParams.has('fecha_reporte')) {
+        fechaInicial = urlParams.get('fecha_reporte') || '';
+    } else if (ctx && ctx.fecha_reporte && (!fichaInicial || ctx.ficha === fichaInicial)) {
+        fechaInicial = ctx.fecha_reporte;
+    }
+
+    const sel = document.getElementById('filtroFicha');
+    if (fichaInicial && sel) {
+        if (!Array.from(sel.options).some(o => o.value === String(fichaInicial))) {
+            const opt = document.createElement('option');
+            opt.value = fichaInicial;
+            opt.textContent = `Ficha ${fichaInicial}`;
+            sel.appendChild(opt);
+        }
+        sel.value = fichaInicial;
+        const fechaFinal = await actualizarFechasAnalytics(fichaInicial, fechaInicial);
+        guardarContextoCorte(fichaInicial, fechaFinal || '', 'analytics.php');
+    } else {
+        await actualizarFechasAnalytics('');
+    }
+
+    await cargarTodo();
 });
 
 async function cargarTodo() {
     const ficha = document.getElementById('filtroFicha')?.value ?? '';
-    const url   = `api_analytics.php?action=inteligencia&ficha=${encodeURIComponent(ficha)}`;
+    const fecha = document.getElementById('filtroFecha')?.value ?? '';
+    const url   = `api_analytics.php?action=inteligencia&ficha=${encodeURIComponent(ficha)}&fecha_reporte=${encodeURIComponent(fecha)}`;
 
     try {
         const res  = await fetch(url);
@@ -345,7 +480,7 @@ function aplicarFiltroRiesgo() {
             <td>${barraProgreso(a.porcentaje_avance, cls)}</td>
             <td><span class="badge-riesgo riesgo-${a.nivel_riesgo}">${a.nivel_riesgo}</span></td>
             <td>
-                <a href="detalle.php?documento=${a.numero_documento}" class="table-link">
+                <a href="${`detalle.php?documento=${encodeURIComponent(a.numero_documento)}&ficha=${encodeURIComponent(document.getElementById('filtroFicha')?.value || a.numero_ficha || '')}&fecha_reporte=${encodeURIComponent(document.getElementById('filtroFecha')?.value || '')}&from=analytics.php`}" class="table-link">
                    Ver →
                 </a>
             </td>

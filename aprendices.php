@@ -74,6 +74,12 @@
                             </div>
                         </div>
                         <div class="filter-group">
+                            <label>Corte / Fecha del reporte</label>
+                            <select id="fecha_reporte" name="fecha_reporte" class="filter-control" disabled>
+                                <option value="">Seleccione una ficha para consultar los cortes</option>
+                            </select>
+                        </div>
+                        <div class="filter-group">
                             <label>Estado</label>
                             <select id="estado" name="estado" class="filter-control">
                                 <option value="">Todos</option>
@@ -179,6 +185,105 @@
                 }
             });
 
+            function formatDateDisplay(dateStr) {
+                if (!dateStr || dateStr.length < 10) return dateStr || '';
+                const meses = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
+                const parts = dateStr.substring(0, 10).split('-');
+                if (parts.length === 3) {
+                    const m = parseInt(parts[1], 10) - 1;
+                    return `${parts[2]} ${meses[m] || parts[1]} ${parts[0]}`;
+                }
+                return dateStr;
+            }
+
+            const CONTEXTO_CORTE_KEY = 'sgje_contexto_corte';
+
+            function guardarContextoCorte(ficha, fecha_reporte, seccionOrigen = 'aprendices.php') {
+                try {
+                    const payload = {
+                        ficha: ficha ? String(ficha) : '',
+                        fecha_reporte: fecha_reporte ? String(fecha_reporte) : '',
+                        seccionOrigen: seccionOrigen
+                    };
+                    sessionStorage.setItem(CONTEXTO_CORTE_KEY, JSON.stringify(payload));
+                    const estado = document.getElementById('estado')?.value || '';
+                    const juicio = document.getElementById('juicio')?.value || '';
+                    const search = document.getElementById('search')?.value || '';
+                    sessionStorage.setItem('sgje_nav_context', JSON.stringify({
+                        ...payload,
+                        estado,
+                        juicio,
+                        search,
+                        busqueda: search
+                    }));
+                } catch (e) {
+                    console.warn('No se pudo guardar contexto:', e);
+                }
+            }
+            window.guardarContextoAprendices = () => {
+                const f = document.getElementById('ficha')?.value || '';
+                const fec = document.getElementById('fecha_reporte')?.value || '';
+                guardarContextoCorte(f, fec, 'aprendices.php');
+            };
+
+            function obtenerContextoCorte() {
+                try {
+                    const raw = sessionStorage.getItem(CONTEXTO_CORTE_KEY);
+                    if (raw) return JSON.parse(raw);
+                    const nav = sessionStorage.getItem('sgje_nav_context');
+                    if (nav) return JSON.parse(nav);
+                } catch (e) {
+                    console.warn('No se pudo leer contexto:', e);
+                }
+                return null;
+            }
+
+            async function actualizarFechasAprendices(ficha, seleccionada = '') {
+                const fechaSel = document.getElementById('fecha_reporte');
+                if (!fechaSel) return '';
+
+                if (!ficha) {
+                    fechaSel.disabled = true;
+                    fechaSel.innerHTML = '<option value="">Seleccione una ficha para consultar los cortes</option>';
+                    return '';
+                }
+
+                fechaSel.disabled = true;
+                fechaSel.innerHTML = '<option value="">Cargando cortes...</option>';
+
+                try {
+                    const res = await fetch(`api.php?action=get_fechas_ficha&ficha=${encodeURIComponent(ficha)}`).then(r => r.json());
+                    if (Array.isArray(res) && res.length > 0) {
+                        fechaSel.innerHTML = '';
+                        const fechaExiste = seleccionada && res.some(c => c.fecha_reporte === seleccionada);
+                        const fechaElegida = fechaExiste ? seleccionada : res[0].fecha_reporte;
+
+                        res.forEach((c, idx) => {
+                            const opt = document.createElement('option');
+                            opt.value = c.fecha_reporte;
+                            opt.textContent = idx === 0 
+                                ? `${formatDateDisplay(c.fecha_reporte)} — Último corte` 
+                                : formatDateDisplay(c.fecha_reporte);
+                            if (c.fecha_reporte === fechaElegida) opt.selected = true;
+                            fechaSel.appendChild(opt);
+                        });
+
+                        fechaSel.value = fechaElegida;
+                        fechaSel.disabled = false;
+                        return fechaElegida;
+                    } else {
+                        fechaSel.innerHTML = '<option value="">Sin cortes registrados</option>';
+                        fechaSel.disabled = true;
+                        return '';
+                    }
+                } catch(e) {
+                    console.error('Error cargando fechas:', e);
+                    fechaSel.innerHTML = '<option value="">Error al cargar cortes</option>';
+                    fechaSel.disabled = true;
+                    return '';
+                }
+            }
+
             async function loadFichas() {
                 try {
                     const res = await fetch('api.php?action=get_fichas');
@@ -214,23 +319,7 @@
                 }
             }
 
-            function guardarContextoAprendices() {
-                const ficha = document.getElementById('ficha')?.value || '';
-                const estado = document.getElementById('estado')?.value || '';
-                const juicio = document.getElementById('juicio')?.value || '';
-                const search = document.getElementById('search')?.value || '';
-                const ctx = {
-                    seccionOrigen: 'aprendices.php',
-                    ficha,
-                    estado,
-                    juicio,
-                    busqueda: search,
-                    search
-                };
-                sessionStorage.setItem('sgje_nav_context', JSON.stringify(ctx));
-                return ctx;
-            }
-            window.guardarContextoAprendices = guardarContextoAprendices;
+            // Contexto gestionado en guardarContextoCorte()
 
             function renderTable() {
                 if(currentData.length === 0) {
@@ -245,6 +334,7 @@
                 const pageData = currentData.slice(start, end);
 
                 const fVal = document.getElementById('ficha')?.value || '';
+                const fechaVal = document.getElementById('fecha_reporte')?.value || '';
                 const eVal = document.getElementById('estado')?.value || '';
                 const jVal = document.getElementById('juicio')?.value || '';
                 const sVal = document.getElementById('search')?.value || '';
@@ -261,6 +351,7 @@
                         documento: ap.numero_documento,
                         from: 'aprendices.php',
                         ...(fVal ? { ficha: fVal } : {}),
+                        ...(fechaVal ? { fecha_reporte: fechaVal } : {}),
                         ...(eVal ? { estado: eVal } : {}),
                         ...(jVal ? { juicio: jVal } : {}),
                         ...(sVal ? { search: sVal } : {})
@@ -323,14 +414,44 @@
                 renderTable();
             }
 
-            filtersForm.addEventListener('change', () => {
-                guardarContextoAprendices();
+            const selectFichaEl = document.getElementById('ficha');
+            const selectFechaEl = document.getElementById('fecha_reporte');
+
+            if (selectFichaEl) {
+                selectFichaEl.addEventListener('change', async () => {
+                    const fichaVal = selectFichaEl.value;
+                    if (selectFechaEl) {
+                        selectFechaEl.disabled = true;
+                        selectFechaEl.innerHTML = '<option value="">Cargando cortes...</option>';
+                    }
+                    const fechaRes = await actualizarFechasAprendices(fichaVal);
+                    guardarContextoCorte(fichaVal, fechaRes || '', 'aprendices.php');
+                    await fetchData();
+                });
+            }
+
+            if (selectFechaEl) {
+                selectFechaEl.addEventListener('change', async () => {
+                    const fVal = selectFichaEl ? selectFichaEl.value : '';
+                    guardarContextoCorte(fVal, selectFechaEl.value, 'aprendices.php');
+                    await fetchData();
+                });
+            }
+
+            filtersForm.addEventListener('change', (e) => {
+                if (e.target && (e.target.id === 'ficha' || e.target.id === 'fecha_reporte')) return;
+                const fVal = selectFichaEl ? selectFichaEl.value : '';
+                const fecVal = selectFechaEl ? selectFechaEl.value : '';
+                guardarContextoCorte(fVal, fecVal, 'aprendices.php');
                 fetchData();
             });
+
             document.getElementById('search').addEventListener('input', () => {
                 clearTimeout(this.st);
                 this.st = setTimeout(() => {
-                    guardarContextoAprendices();
+                    const fVal = selectFichaEl ? selectFichaEl.value : '';
+                    const fecVal = selectFechaEl ? selectFechaEl.value : '';
+                    guardarContextoCorte(fVal, fecVal, 'aprendices.php');
                     fetchData();
                 }, 400);
             });
@@ -339,25 +460,25 @@
                 await loadFichas();
 
                 const urlParams = new URLSearchParams(window.location.search);
-                let f = urlParams.get('ficha');
-                let e = urlParams.get('estado');
-                let j = urlParams.get('juicio');
-                let s = urlParams.get('search');
+                const ctx = obtenerContextoCorte();
 
-                if (!f && !e && !j && !s) {
-                    try {
-                        const raw = sessionStorage.getItem('sgje_nav_context');
-                        if (raw) {
-                            const ctx = JSON.parse(raw);
-                            if (ctx.seccionOrigen === 'aprendices.php' || !ctx.seccionOrigen) {
-                                f = ctx.ficha || '';
-                                e = ctx.estado || '';
-                                j = ctx.juicio || '';
-                                s = ctx.busqueda || ctx.search || '';
-                            }
-                        }
-                    } catch(_) {}
+                let f = '';
+                if (urlParams.has('ficha')) {
+                    f = urlParams.get('ficha') || '';
+                } else if (ctx && ctx.ficha) {
+                    f = ctx.ficha;
                 }
+
+                let fecha = '';
+                if (urlParams.has('fecha_reporte')) {
+                    fecha = urlParams.get('fecha_reporte') || '';
+                } else if (ctx && ctx.fecha_reporte && (!f || ctx.ficha === f)) {
+                    fecha = ctx.fecha_reporte;
+                }
+
+                let e = urlParams.get('estado') || (ctx ? ctx.estado : '');
+                let j = urlParams.get('juicio') || (ctx ? ctx.juicio : '');
+                let s = urlParams.get('search') || (ctx ? (ctx.busqueda || ctx.search) : '');
 
                 const selectFicha = document.getElementById('ficha');
                 const selectEstado = document.getElementById('estado');
@@ -365,19 +486,23 @@
                 const inputSearch = document.getElementById('search');
 
                 if (f && selectFicha) {
-                    if (!Array.from(selectFicha.options).some(opt => opt.value === f)) {
+                    if (!Array.from(selectFicha.options).some(opt => opt.value === String(f))) {
                         const opt = document.createElement('option');
                         opt.value = f;
                         opt.textContent = `Ficha ${f}`;
                         selectFicha.appendChild(opt);
                     }
                     selectFicha.value = f;
+                    const fechaCargada = await actualizarFechasAprendices(f, fecha || '');
+                    guardarContextoCorte(f, fechaCargada || '', 'aprendices.php');
+                } else {
+                    await actualizarFechasAprendices('');
                 }
+
                 if (e && selectEstado) selectEstado.value = e;
                 if (j && selectJuicio) selectJuicio.value = j;
                 if (s && inputSearch) inputSearch.value = s;
 
-                guardarContextoAprendices();
                 await fetchData();
             }
 

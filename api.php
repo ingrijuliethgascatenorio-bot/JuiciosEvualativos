@@ -21,18 +21,63 @@ if (in_array($action, $accionesProtegidas, true)) {
 // Estados que se excluyen de las estadísticas de avance (no del conteo por estado del chart)
 const ESTADOS_INACTIVOS_SQL = "e.nombre NOT IN ('RETIRO VOLUNTARIO', 'CANCELADO', 'TRASLADADO', 'APLAZADO')";
 
+if ($action === 'get_fechas_ficha') {
+    $ficha = trim($_GET['ficha'] ?? '');
+    if ($ficha === '') {
+        echo json_encode([]);
+        exit;
+    }
+    try {
+        $stmt = $pdo->prepare("
+            SELECT DISTINCT ON (fecha_reporte)
+                id AS id_importacion,
+                numero_ficha,
+                fecha_reporte,
+                fecha_importacion,
+                nombre_archivo
+            FROM historial_importaciones
+            WHERE numero_ficha = :ficha
+              AND estado = 'EXITOSO'
+            ORDER BY
+                fecha_reporte DESC,
+                fecha_importacion DESC,
+                id DESC
+        ");
+        $stmt->execute([':ficha' => (int)$ficha]);
+        $fechas = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        echo json_encode($fechas);
+    } catch (Exception $e) {
+        echo json_encode([]);
+    }
+    exit;
+}
+
 if ($action === 'get_dashboard') {
     $ficha = trim($_GET['ficha'] ?? '');
+    $fecha_reporte = trim($_GET['fecha_reporte'] ?? $_GET['fecha'] ?? '');
     $estado = trim($_GET['estado'] ?? '');
     $juicio = trim($_GET['juicio'] ?? '');
     $competencia = trim($_GET['competencia'] ?? '');
     $documento = trim($_GET['documento'] ?? '');
 
-    // Este filtro aplica a los conteos de avance (total, aprobados, por evaluar, tabla),
-    // pero NO al chart de estados (stmt4), que debe seguir mostrando a todos, incluidos
-    // retirados/cancelados/trasladados/aplazados.
+    $id_corte = null;
+    if ($ficha !== '') {
+        if ($fecha_reporte !== '') {
+            $stmtCorte = $pdo->prepare("SELECT id, fecha_reporte FROM historial_importaciones WHERE numero_ficha = :ficha AND fecha_reporte = :fecha AND estado = 'EXITOSO' ORDER BY id DESC LIMIT 1");
+            $stmtCorte->execute([':ficha' => (int)$ficha, ':fecha' => $fecha_reporte]);
+        } else {
+            $stmtCorte = $pdo->prepare("SELECT id, fecha_reporte FROM historial_importaciones WHERE numero_ficha = :ficha AND estado = 'EXITOSO' ORDER BY fecha_reporte DESC, fecha_importacion DESC LIMIT 1");
+            $stmtCorte->execute([':ficha' => (int)$ficha]);
+        }
+        $corteRow = $stmtCorte->fetch(PDO::FETCH_ASSOC);
+        if ($corteRow) {
+            $id_corte = (int)$corteRow['id'];
+            $fecha_reporte = $corteRow['fecha_reporte'];
+        }
+    }
+
     $where = [ESTADOS_INACTIVOS_SQL];
-    $params = [];
+    $params = [':id_corte' => $id_corte];
 
     if ($ficha !== '') {
         $where[] = "a.numero_ficha = :ficha";
@@ -56,11 +101,8 @@ if ($action === 'get_dashboard') {
     }
 
     $whereClause = count($where) > 0 ? "WHERE " . implode(" AND ", $where) : "";
-    $limitClause = "LIMIT 500"; // Restauramos el límite normal para ver a todos los aprendices
+    $limitClause = "LIMIT 500";
 
-    // Where del chart de estados: usa los mismos filtros del usuario (ficha/juicio/etc.)
-    // pero SIN excluir a los inactivos, porque este chart es justamente el que reporta
-    // cuántos hay en cada estado (incluidos retirados, cancelados, etc.).
     $whereChart = array_values(array_filter($where, fn($cond) => $cond !== ESTADOS_INACTIVOS_SQL));
     $whereClauseChart = count($whereChart) > 0 ? "WHERE " . implode(" AND ", $whereChart) : "";
 
@@ -68,7 +110,7 @@ if ($action === 'get_dashboard') {
     $stmt = $pdo->prepare("SELECT COUNT(DISTINCT a.numero_documento) as total FROM aprendices a 
                            JOIN fichas f ON a.numero_ficha = f.numero_ficha
                            LEFT JOIN estados e ON a.id_estado = e.id_estado 
-                           LEFT JOIN matricula_resultados mr ON a.numero_documento = mr.num_documento_aprendiz
+                           LEFT JOIN matricula_resultados mr ON a.numero_documento = mr.num_documento_aprendiz AND (:id_corte::int IS NULL OR mr.id_importacion = :id_corte)
                            LEFT JOIN juicios_catalogo jc ON mr.id_juicio_cat = jc.id_juicio_cat
                            LEFT JOIN resultados r ON mr.codigo_resul = r.codigo_resul
                            LEFT JOIN competencias c ON r.codigo_comp = c.codigo_comp AND c.codigo_programa = f.codigo_programa
@@ -84,7 +126,9 @@ if ($action === 'get_dashboard') {
                             JOIN juicios_catalogo jc ON mr.id_juicio_cat = jc.id_juicio_cat
                             JOIN resultados r ON mr.codigo_resul = r.codigo_resul
                             JOIN competencias c ON r.codigo_comp = c.codigo_comp AND c.codigo_programa = f.codigo_programa
-                            $whereClause " . ($whereClause ? "AND jc.descripcion = 'APROBADO'" : "WHERE jc.descripcion = 'APROBADO'"));
+                            $whereClause 
+                              AND (:id_corte::int IS NULL OR mr.id_importacion = :id_corte)
+                              AND jc.descripcion = 'APROBADO'");
     $stmt2->execute($params);
     $juiciosAprobados = (int)($stmt2->fetch(PDO::FETCH_ASSOC)['total'] ?? 0);
 
@@ -96,7 +140,9 @@ if ($action === 'get_dashboard') {
                             JOIN juicios_catalogo jc ON mr.id_juicio_cat = jc.id_juicio_cat
                             JOIN resultados r ON mr.codigo_resul = r.codigo_resul
                             JOIN competencias c ON r.codigo_comp = c.codigo_comp AND c.codigo_programa = f.codigo_programa
-                            $whereClause " . ($whereClause ? "AND jc.descripcion = 'POR EVALUAR'" : "WHERE jc.descripcion = 'POR EVALUAR'"));
+                            $whereClause 
+                              AND (:id_corte::int IS NULL OR mr.id_importacion = :id_corte)
+                              AND jc.descripcion = 'POR EVALUAR'");
     $stmt3->execute($params);
     $juiciosPorEvaluar = (int)($stmt3->fetch(PDO::FETCH_ASSOC)['total'] ?? 0);
 
@@ -104,27 +150,32 @@ if ($action === 'get_dashboard') {
     $totalJuicios = $juiciosAprobados + $juiciosPorEvaluar;
     $avanceGeneral = $totalJuicios > 0 ? round(($juiciosAprobados / $totalJuicios) * 100, 2) : 0;
 
-    // Estados para Chart
-    $stmt4 = $pdo->prepare("SELECT e.nombre, COUNT(DISTINCT a.numero_documento) as count 
+    // Estados para Chart (respetando estado del corte si existe)
+    $stmt4 = $pdo->prepare("SELECT COALESCE(e_corte.nombre, e.nombre) as nombre, COUNT(DISTINCT a.numero_documento) as count 
                             FROM aprendices a 
                             JOIN estados e ON a.id_estado = e.id_estado 
-                            LEFT JOIN matricula_resultados mr ON a.numero_documento = mr.num_documento_aprendiz
+                            LEFT JOIN corte_aprendices ca ON ca.id_importacion = :id_corte AND ca.numero_documento = a.numero_documento
+                            LEFT JOIN estados e_corte ON e_corte.id_estado = ca.id_estado
+                            LEFT JOIN matricula_resultados mr ON a.numero_documento = mr.num_documento_aprendiz AND (:id_corte::int IS NULL OR mr.id_importacion = :id_corte)
                             LEFT JOIN juicios_catalogo jc ON mr.id_juicio_cat = jc.id_juicio_cat
                             LEFT JOIN resultados r ON mr.codigo_resul = r.codigo_resul
                             LEFT JOIN competencias c ON r.codigo_comp = c.codigo_comp
                             $whereClauseChart
-                            GROUP BY e.nombre");
+                            GROUP BY COALESCE(e_corte.nombre, e.nombre)");
     $stmt4->execute($params);
     $estadosData = $stmt4->fetchAll(PDO::FETCH_ASSOC);
 
-    // Tabla de Detalles (Un resumen por aprendiz)
+    // Tabla de Detalles (Un resumen por aprendiz para este corte)
     $stmt5 = $pdo->prepare("SELECT DISTINCT ON (a.numero_documento) 
-                                   a.numero_documento, a.nombres, a.apellidos, a.numero_ficha, e.nombre as estado, 
+                                   a.numero_documento, a.nombres, a.apellidos, a.numero_ficha, 
+                                   COALESCE(e_corte.nombre, e.nombre) as estado, 
                                    c.nombre_comp, r.nombre_resultado, jc.descripcion as juicio
                             FROM aprendices a
                             JOIN fichas f ON a.numero_ficha = f.numero_ficha
                             JOIN estados e ON a.id_estado = e.id_estado
-                            LEFT JOIN matricula_resultados mr ON a.numero_documento = mr.num_documento_aprendiz
+                            LEFT JOIN corte_aprendices ca ON ca.id_importacion = :id_corte AND ca.numero_documento = a.numero_documento
+                            LEFT JOIN estados e_corte ON e_corte.id_estado = ca.id_estado
+                            LEFT JOIN matricula_resultados mr ON a.numero_documento = mr.num_documento_aprendiz AND (:id_corte::int IS NULL OR mr.id_importacion = :id_corte)
                             LEFT JOIN resultados r ON mr.codigo_resul = r.codigo_resul
                             LEFT JOIN competencias c ON r.codigo_comp = c.codigo_comp AND c.codigo_programa = f.codigo_programa
                             LEFT JOIN juicios_catalogo jc ON mr.id_juicio_cat = jc.id_juicio_cat
@@ -135,6 +186,9 @@ if ($action === 'get_dashboard') {
     $tablaData = $stmt5->fetchAll(PDO::FETCH_ASSOC);
 
     echo json_encode([
+        'ficha' => $ficha,
+        'fecha_reporte' => $fecha_reporte,
+        'id_importacion' => $id_corte,
         'totalAprendices' => $totalAprendices,
         'juiciosAprobados' => $juiciosAprobados,
         'juiciosPorEvaluar' => $juiciosPorEvaluar,
@@ -146,44 +200,95 @@ if ($action === 'get_dashboard') {
 }
 
 if ($action === 'get_project_analysis') {
-    $ficha = $_GET['ficha'] ?? '';
+    $ficha = trim($_GET['ficha'] ?? '');
+    $fecha_reporte = trim($_GET['fecha_reporte'] ?? '');
 
-    $where = [ESTADOS_INACTIVOS_SQL];
-    $params = [];
-
+    $id_corte = null;
     if ($ficha !== '') {
-        $where[] = "f.numero_ficha = :ficha";
-        $params[':ficha'] = $ficha;
+        if ($fecha_reporte !== '') {
+            $stmtCorte = $pdo->prepare("SELECT id, fecha_reporte FROM historial_importaciones WHERE numero_ficha = :ficha AND fecha_reporte = :fecha AND estado = 'EXITOSO' ORDER BY id DESC LIMIT 1");
+            $stmtCorte->execute([':ficha' => (int)$ficha, ':fecha' => $fecha_reporte]);
+        } else {
+            $stmtCorte = $pdo->prepare("SELECT id, fecha_reporte FROM historial_importaciones WHERE numero_ficha = :ficha AND estado = 'EXITOSO' ORDER BY fecha_reporte DESC, fecha_importacion DESC LIMIT 1");
+            $stmtCorte->execute([':ficha' => (int)$ficha]);
+        }
+        $corteRow = $stmtCorte->fetch(PDO::FETCH_ASSOC);
+        if ($corteRow) {
+            $id_corte = (int)$corteRow['id'];
+            $fecha_reporte = $corteRow['fecha_reporte'];
+        }
     }
 
-    $competencia = $_GET['competencia'] ?? '';
-    if ($competencia !== '') {
-        $where[] = "(c.codigo_comp::text LIKE :comp OR c.nombre_comp ILIKE :comp)";
-        $params[':comp'] = "%$competencia%";
+    $competencia = trim($_GET['competencia'] ?? '');
+
+    // Consulta analítica quirúrgica basada en el corte seleccionado
+    if ($id_corte !== null) {
+        $where = ["mr.id_importacion = :id_corte", "COALESCE(e_corte.nombre, e.nombre) NOT IN ('CANCELADO', 'RETIRO VOLUNTARIO', 'TRASLADADO')"];
+        $params = [':id_corte' => $id_corte];
+
+        if ($competencia !== '') {
+            $where[] = "(c.codigo_comp::text LIKE :comp OR c.nombre_comp ILIKE :comp)";
+            $params[':comp'] = "%$competencia%";
+        }
+
+        $whereClause = "WHERE " . implode(" AND ", $where);
+
+        $sql = "SELECT 
+                    c.codigo_comp, 
+                    c.nombre_comp, 
+                    r.codigo_resul, 
+                    r.nombre_resultado,
+                    COUNT(DISTINCT a.numero_documento) as total_aprendices,
+                    SUM(CASE WHEN jc.descripcion = 'APROBADO' THEN 1 ELSE 0 END) as aprobados,
+                    SUM(CASE WHEN jc.descripcion = 'POR EVALUAR' THEN 1 ELSE 0 END) as por_evaluar,
+                    SUM(CASE WHEN jc.descripcion = 'NO APROBADO' THEN 1 ELSE 0 END) as no_aprobados
+                FROM matricula_resultados mr
+                JOIN resultados r ON mr.codigo_resul = r.codigo_resul
+                JOIN competencias c ON r.codigo_comp = c.codigo_comp
+                JOIN aprendices a ON mr.num_documento_aprendiz = a.numero_documento
+                LEFT JOIN corte_aprendices ca ON ca.id_importacion = mr.id_importacion AND ca.numero_documento = a.numero_documento
+                LEFT JOIN estados e_corte ON e_corte.id_estado = ca.id_estado
+                JOIN estados e ON a.id_estado = e.id_estado
+                JOIN juicios_catalogo jc ON mr.id_juicio_cat = jc.id_juicio_cat
+                $whereClause
+                GROUP BY c.codigo_comp, c.nombre_comp, r.codigo_resul, r.nombre_resultado
+                ORDER BY c.nombre_comp, r.nombre_resultado";
+    } else {
+        $where = [ESTADOS_INACTIVOS_SQL];
+        $params = [];
+
+        if ($ficha !== '') {
+            $where[] = "f.numero_ficha = :ficha";
+            $params[':ficha'] = $ficha;
+        }
+
+        if ($competencia !== '') {
+            $where[] = "(c.codigo_comp::text LIKE :comp OR c.nombre_comp ILIKE :comp)";
+            $params[':comp'] = "%$competencia%";
+        }
+
+        $whereClause = count($where) > 0 ? "WHERE " . implode(" AND ", $where) : "";
+
+        $sql = "SELECT 
+                    c.codigo_comp, 
+                    c.nombre_comp, 
+                    r.codigo_resul, 
+                    r.nombre_resultado,
+                    COUNT(DISTINCT a.numero_documento) as total_aprendices,
+                    SUM(CASE WHEN jc.descripcion = 'APROBADO' THEN 1 ELSE 0 END) as aprobados,
+                    SUM(CASE WHEN jc.descripcion = 'POR EVALUAR' THEN 1 ELSE 0 END) as por_evaluar,
+                    SUM(CASE WHEN jc.descripcion = 'NO APROBADO' THEN 1 ELSE 0 END) as no_aprobados
+                FROM competencias c
+                JOIN resultados r ON c.codigo_comp = r.codigo_comp
+                JOIN fichas f ON f.codigo_programa = c.codigo_programa
+                JOIN aprendices a ON a.numero_ficha = f.numero_ficha
+                JOIN estados e ON a.id_estado = e.id_estado
+                LEFT JOIN matricula_resultados mr ON mr.codigo_resul = r.codigo_resul AND mr.num_documento_aprendiz = a.numero_documento
+                LEFT JOIN juicios_catalogo jc ON mr.id_juicio_cat = jc.id_juicio_cat
+                $whereClause
+                GROUP BY c.codigo_comp, c.nombre_comp, r.codigo_resul, r.nombre_resultado
+                ORDER BY c.nombre_comp, r.nombre_resultado";
     }
-
-    $whereClause = count($where) > 0 ? "WHERE " . implode(" AND ", $where) : "";
-
-    // Nueva consulta optimizada: Solo une resultados con aprendices de fichas que pertenecen al programa del resultado
-    $sql = "SELECT 
-                c.codigo_comp, 
-                c.nombre_comp, 
-                r.codigo_resul, 
-                r.nombre_resultado,
-                COUNT(DISTINCT a.numero_documento) as total_aprendices,
-                SUM(CASE WHEN jc.descripcion = 'APROBADO' THEN 1 ELSE 0 END) as aprobados,
-                SUM(CASE WHEN jc.descripcion = 'POR EVALUAR' THEN 1 ELSE 0 END) as por_evaluar,
-                SUM(CASE WHEN jc.descripcion = 'NO APROBADO' THEN 1 ELSE 0 END) as no_aprobados
-            FROM competencias c
-            JOIN resultados r ON c.codigo_comp = r.codigo_comp
-            JOIN fichas f ON f.codigo_programa = c.codigo_programa
-            JOIN aprendices a ON a.numero_ficha = f.numero_ficha
-            JOIN estados e ON a.id_estado = e.id_estado
-            LEFT JOIN matricula_resultados mr ON mr.codigo_resul = r.codigo_resul AND mr.num_documento_aprendiz = a.numero_documento
-            LEFT JOIN juicios_catalogo jc ON mr.id_juicio_cat = jc.id_juicio_cat
-            $whereClause
-            GROUP BY c.codigo_comp, c.nombre_comp, r.codigo_resul, r.nombre_resultado
-            ORDER BY c.nombre_comp, r.nombre_resultado";
     
     $stmt = $pdo->prepare($sql);
     $stmt->execute($params);
@@ -217,12 +322,13 @@ if ($action === 'delete_all') {
     try {
         $pdo->beginTransaction();
         $pdo->exec("DELETE FROM matricula_resultados");
+        $pdo->exec("DELETE FROM corte_aprendices");
+        $pdo->exec("DELETE FROM historial_importaciones");
         $pdo->exec("DELETE FROM aprendices");
         $pdo->exec("DELETE FROM fichas");
         $pdo->exec("DELETE FROM resultados");
         $pdo->exec("DELETE FROM competencias");
         $pdo->exec("DELETE FROM programas");
-        // No borramos estados ni juicios_catalogo porque son maestros básicos
         $pdo->commit();
         echo json_encode(['success' => true, 'message' => 'Toda la información ha sido eliminada correctamente.']);
     } catch (Exception $e) {
@@ -241,13 +347,11 @@ if ($action === 'delete_ficha') {
 
     try {
         $pdo->beginTransaction();
-        // 1. Borrar juicios de los aprendices de esa ficha
-        $pdo->prepare("DELETE FROM matricula_resultados WHERE num_documento_aprendiz IN (SELECT numero_documento FROM aprendices WHERE numero_ficha = ?)")->execute([$ficha]);
-        // 2. Borrar aprendices de esa ficha
-        $pdo->prepare("DELETE FROM aprendices WHERE numero_ficha = ?")->execute([$ficha]);
-        // 3. Borrar la ficha
-        $pdo->prepare("DELETE FROM fichas WHERE numero_ficha = ?")->execute([$ficha]);
-        
+        $pdo->prepare("DELETE FROM matricula_resultados WHERE numero_ficha = :ficha OR num_documento_aprendiz IN (SELECT numero_documento FROM aprendices WHERE numero_ficha = :ficha)")->execute([':ficha' => (int)$ficha]);
+        $pdo->prepare("DELETE FROM corte_aprendices WHERE id_importacion IN (SELECT id FROM historial_importaciones WHERE numero_ficha = :ficha)")->execute([':ficha' => (int)$ficha]);
+        $pdo->prepare("DELETE FROM historial_importaciones WHERE numero_ficha = :ficha")->execute([':ficha' => (int)$ficha]);
+        $pdo->prepare("DELETE FROM aprendices WHERE numero_ficha = :ficha")->execute([':ficha' => (int)$ficha]);
+        $pdo->prepare("DELETE FROM fichas WHERE numero_ficha = :ficha")->execute([':ficha' => (int)$ficha]);
         $pdo->commit();
         echo json_encode(['success' => true, 'message' => "La ficha $ficha y sus datos relacionados han sido eliminados."]);
     } catch (Exception $e) {
@@ -269,21 +373,38 @@ if ($action === 'get_fichas') {
 }
 
 if ($action === 'get_all_aprendices') {
-    $ficha = $_GET['ficha'] ?? '';
-    $estado = $_GET['estado'] ?? '';
-    $juicio = $_GET['juicio'] ?? '';
-    $competencia = $_GET['competencia'] ?? '';
-    $search = $_GET['search'] ?? '';
+    $ficha = trim($_GET['ficha'] ?? '');
+    $fecha_reporte = trim($_GET['fecha_reporte'] ?? '');
+    $estado = trim($_GET['estado'] ?? '');
+    $juicio = trim($_GET['juicio'] ?? '');
+    $competencia = trim($_GET['competencia'] ?? '');
+    $search = trim($_GET['search'] ?? '');
+
+    $id_corte = null;
+    if ($ficha !== '') {
+        if ($fecha_reporte !== '') {
+            $stmtCorte = $pdo->prepare("SELECT id, fecha_reporte FROM historial_importaciones WHERE numero_ficha = :ficha AND fecha_reporte = :fecha AND estado = 'EXITOSO' ORDER BY id DESC LIMIT 1");
+            $stmtCorte->execute([':ficha' => (int)$ficha, ':fecha' => $fecha_reporte]);
+        } else {
+            $stmtCorte = $pdo->prepare("SELECT id, fecha_reporte FROM historial_importaciones WHERE numero_ficha = :ficha AND estado = 'EXITOSO' ORDER BY fecha_reporte DESC, fecha_importacion DESC LIMIT 1");
+            $stmtCorte->execute([':ficha' => (int)$ficha]);
+        }
+        $corteRow = $stmtCorte->fetch(PDO::FETCH_ASSOC);
+        if ($corteRow) {
+            $id_corte = (int)$corteRow['id'];
+            $fecha_reporte = $corteRow['fecha_reporte'];
+        }
+    }
 
     $where = [];
-    $params = [];
+    $params = [':id_corte' => $id_corte];
 
     if ($ficha !== '') {
         $where[] = "a.numero_ficha = :ficha";
-        $params[':ficha'] = $ficha;
+        $params[':ficha'] = (int)$ficha;
     }
     if ($estado !== '') {
-        $where[] = "e.nombre = :estado";
+        $where[] = "COALESCE(e_corte.nombre, e.nombre) = :estado";
         $params[':estado'] = $estado;
     }
     if ($juicio !== '') {
@@ -303,15 +424,21 @@ if ($action === 'get_all_aprendices') {
 
     $sql = "SELECT * FROM (
                 SELECT DISTINCT ON (a.numero_documento) 
-                       a.numero_documento, a.nombres, a.apellidos, a.numero_ficha, e.nombre as estado,
+                       a.numero_documento, a.nombres, a.apellidos, a.numero_ficha, 
+                       COALESCE(e_corte.nombre, e.nombre) as estado,
                        (SELECT COUNT(*) FROM matricula_resultados mr2 
                         JOIN juicios_catalogo jc2 ON mr2.id_juicio_cat = jc2.id_juicio_cat 
-                        WHERE mr2.num_documento_aprendiz = a.numero_documento AND jc2.descripcion = 'APROBADO') as aprobados,
+                        WHERE mr2.num_documento_aprendiz = a.numero_documento 
+                          AND (:id_corte::int IS NULL OR mr2.id_importacion = :id_corte)
+                          AND jc2.descripcion = 'APROBADO') as aprobados,
                        (SELECT COUNT(*) FROM matricula_resultados mr3 
-                        WHERE mr3.num_documento_aprendiz = a.numero_documento) as total
+                        WHERE mr3.num_documento_aprendiz = a.numero_documento
+                          AND (:id_corte::int IS NULL OR mr3.id_importacion = :id_corte)) as total
                 FROM aprendices a
                 JOIN estados e ON a.id_estado = e.id_estado
-                LEFT JOIN matricula_resultados mr ON mr.num_documento_aprendiz = a.numero_documento
+                LEFT JOIN corte_aprendices ca ON ca.id_importacion = :id_corte AND ca.numero_documento = a.numero_documento
+                LEFT JOIN estados e_corte ON e_corte.id_estado = ca.id_estado
+                LEFT JOIN matricula_resultados mr ON mr.num_documento_aprendiz = a.numero_documento AND (:id_corte::int IS NULL OR mr.id_importacion = :id_corte)
                 LEFT JOIN juicios_catalogo jc ON jc.id_juicio_cat = mr.id_juicio_cat
                 LEFT JOIN resultados r ON mr.codigo_resul = r.codigo_resul
                 LEFT JOIN competencias c ON r.codigo_comp = c.codigo_comp
@@ -330,25 +457,49 @@ if ($action === 'get_all_aprendices') {
 
 if ($action === 'get_result_apprentices') {
     $codigo_resul = $_GET['codigo_resul'] ?? '';
-    $ficha = $_GET['ficha'] ?? '';
+    $ficha = trim($_GET['ficha'] ?? '');
+    $fecha_reporte = trim($_GET['fecha_reporte'] ?? '');
 
     if ($codigo_resul === '') {
         echo json_encode([]);
         exit;
     }
 
+    $id_corte = null;
+    if ($ficha !== '') {
+        if ($fecha_reporte !== '') {
+            $stmtCorte = $pdo->prepare("SELECT id, fecha_reporte FROM historial_importaciones WHERE numero_ficha = :ficha AND fecha_reporte = :fecha AND estado = 'EXITOSO' ORDER BY id DESC LIMIT 1");
+            $stmtCorte->execute([':ficha' => (int)$ficha, ':fecha' => $fecha_reporte]);
+        } else {
+            $stmtCorte = $pdo->prepare("SELECT id, fecha_reporte FROM historial_importaciones WHERE numero_ficha = :ficha AND estado = 'EXITOSO' ORDER BY fecha_reporte DESC, fecha_importacion DESC LIMIT 1");
+            $stmtCorte->execute([':ficha' => (int)$ficha]);
+        }
+        $corteRow = $stmtCorte->fetch(PDO::FETCH_ASSOC);
+        if ($corteRow) {
+            $id_corte = (int)$corteRow['id'];
+        }
+    }
+
     $where = ["mr.codigo_resul = :resul", "jc.descripcion = 'APROBADO'"];
-    $params = [':resul' => $codigo_resul];
+    $params = [':resul' => $codigo_resul, ':id_corte' => $id_corte];
 
     if ($ficha !== '') {
         $where[] = "a.numero_ficha = :ficha";
-        $params[':ficha'] = $ficha;
+        $params[':ficha'] = (int)$ficha;
+    }
+
+    if ($id_corte !== null) {
+        $where[] = "mr.id_importacion = :id_corte";
     }
 
     $whereClause = "WHERE " . implode(" AND ", $where);
 
-    $sql = "SELECT a.numero_documento, a.nombres, a.apellidos, a.numero_ficha
+    $sql = "SELECT a.numero_documento, a.nombres, a.apellidos, a.numero_ficha,
+                   COALESCE(e_corte.nombre, e.nombre) as estado
             FROM aprendices a
+            JOIN estados e ON a.id_estado = e.id_estado
+            LEFT JOIN corte_aprendices ca ON ca.id_importacion = :id_corte AND ca.numero_documento = a.numero_documento
+            LEFT JOIN estados e_corte ON e_corte.id_estado = ca.id_estado
             JOIN matricula_resultados mr ON a.numero_documento = mr.num_documento_aprendiz
             JOIN juicios_catalogo jc ON mr.id_juicio_cat = jc.id_juicio_cat
             $whereClause
