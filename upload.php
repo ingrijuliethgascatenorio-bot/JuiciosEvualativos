@@ -404,16 +404,26 @@ if (!in_array($extension, ['csv', 'xlsx', 'xls'])) {
 }
 
 try {
+    $inicioProceso = microtime(true);
+    $tiempos = [];
+    $marcarTiempo = function(string $fase) use (&$tiempos, $inicioProceso) {
+        $tiempos[$fase] = round((microtime(true) - $inicioProceso) * 1000, 2);
+    };
+
     // 1. Calcular Hash SHA-256 antes del procesamiento completo
     $fileHash = hash_file('sha256', $fileTmpPath);
     if (!$fileHash) {
         throw new Exception('No se pudo calcular el hash de verificación del archivo.');
     }
+    $marcarTiempo('HASH_SHA256');
 
-    // 2. Cargar el archivo Excel
-    $spreadsheet = IOFactory::load($fileTmpPath);
+    // 2. Cargar el archivo Excel con lectura eficiente de solo datos
+    $reader = IOFactory::createReaderForFile($fileTmpPath);
+    $reader->setReadDataOnly(true);
+    $spreadsheet = $reader->load($fileTmpPath);
     $sheet = $spreadsheet->getActiveSheet();
     $rows = $sheet->toArray();
+    $marcarTiempo('LECTURA_EXCEL');
 
     if (count($rows) <= 1) {
         echo json_encode(['success' => false, 'message' => 'El archivo está vacío o solo contiene encabezados.']);
@@ -422,6 +432,7 @@ try {
 
     // 3. Extracción de metadatos de la cabecera directamente desde el Excel
     $meta = obtenerMetadatosReporteExcel($spreadsheet);
+    $marcarTiempo('EXTRACCION_METADATOS');
 
     // 4. Validaciones obligatorias de la cabecera (Ficha y Fecha extraídas exclusivamente del archivo)
     if (empty($meta['numero_ficha']) || !is_numeric($meta['numero_ficha'])) {
@@ -734,6 +745,25 @@ try {
     $advertencias = [];
     $aprendicesConflictoRegistrados = [];
 
+    // Lotes optimizados para evitar miles de viajes de red (evita Error 504)
+    $batchMatriculas = [];
+    $flushBatchMatriculas = function() use (&$batchMatriculas, $pdo) {
+        if (empty($batchMatriculas)) return;
+        $placeholders = [];
+        $params = [];
+        foreach ($batchMatriculas as $row) {
+            $placeholders[] = "(?, ?, ?, ?, ?, ?, ?, ?)";
+            foreach ($row as $val) {
+                $params[] = $val;
+            }
+        }
+        $sqlBatch = "INSERT INTO matricula_resultados (id_importacion, fecha_reporte, numero_ficha, num_documento_aprendiz, codigo_resul, id_juicio_cat, num_documento_instructor, fecha_registro) VALUES " . implode(", ", $placeholders);
+        $pdo->prepare($sqlBatch)->execute($params);
+        $batchMatriculas = [];
+    };
+
+    $corteAprendicesBatch = [];
+
     // 11. Bucle de Procesamiento Fila por Fila
     for ($i = $headerRowIndex + 1; $i < count($rows); $i++) {
         $data = $rows[$i];
@@ -765,8 +795,6 @@ try {
             $appDb = $cache_aprendices_db[$num_doc];
             $ficha_db_norm = normalizarNumeroFicha($appDb['numero_ficha']);
 
-            // Solo existe conflicto real si la ficha en BD existe, la ficha del archivo existe, y NO son iguales
-            // El estado del aprendiz (activo, retirado, cancelado, etc.) NO determina conflicto de pertenencia
             if ($ficha_db_norm !== '' && $ficha_archivo_norm !== '' && $ficha_db_norm !== $ficha_archivo_norm) {
                 $contadores['conflictos']++;
                 if (!isset($aprendicesConflictoRegistrados[$num_doc])) {
@@ -795,8 +823,8 @@ try {
             ];
         }
 
-        // Guardar estado histórico del aprendiz para este corte
-        $stmt_ins_corte_ap->execute([$id_importacion, $num_doc, $estado_id]);
+        // Acumular estado del aprendiz para este corte (se insertará en un solo lote al final)
+        $corteAprendicesBatch[$num_doc] = $estado_id;
 
         // 11.C. Competencia (Sin crc32, validando relación con el programa)
         $raw_comp = getCol($data, $colMap, 'nom_comp', '');
@@ -827,7 +855,6 @@ try {
             continue;
         }
 
-        // Validar que la competencia pertenece al programa de la ficha
         if (isset($cache_comp_programa[$cod_comp])) {
             $prog_comp = $cache_comp_programa[$cod_comp];
             if ($prog_comp !== $cod_programa) {
@@ -836,13 +863,12 @@ try {
                 continue;
             }
         } else {
-            // Competencia no existe en BD: insertarla vinculada a este programa
             $stmt_comp->execute([$cod_comp, $nom_comp, $cod_programa]);
             $cache_comp_programa[$cod_comp] = $cod_programa;
             $cache_comp_por_nombre[normalizarTexto($nom_comp)][$cod_programa] = $cod_comp;
         }
 
-        // 11.D. Resultado de Aprendizaje (Sin crc32, validando relación con la competencia)
+        // 11.D. Resultado de Aprendizaje
         $raw_resul = getCol($data, $colMap, 'nom_resul', '');
         if (empty($raw_resul)) {
             $contadores['conflictos']++;
@@ -871,7 +897,6 @@ try {
             continue;
         }
 
-        // Validar que el resultado pertenece a esta competencia
         if (isset($cache_resul_comp[$cod_resul])) {
             $comp_resul = $cache_resul_comp[$cod_resul];
             if ($comp_resul !== $cod_comp) {
@@ -880,7 +905,6 @@ try {
                 continue;
             }
         } else {
-            // Resultado no existe en BD: insertarlo vinculado a esta competencia
             $stmt_res->execute([$cod_resul, $nom_resul, $cod_comp]);
             $cache_resul_comp[$cod_resul] = $cod_comp;
             $cache_resul_por_nombre[$cod_comp][normalizarTexto($nom_resul)] = $cod_resul;
@@ -907,7 +931,7 @@ try {
 
         $juicio_id = $cache_juicios[$raw_juicio] ?? $cache_juicios['POR EVALUAR'];
         $raw_fecha = getCol($data, $colMap, 'fecha_hora', '');
-        $fecha_juicio = parseFecha($raw_fecha); // Puede ser string 'Y-m-d H:i:s' o NULL (NUNCA now())
+        $fecha_juicio = parseFecha($raw_fecha);
 
         // 11.G. Evaluación de Juicio en Base de Datos (Idempotencia y Cronología)
         if (!isset($cache_matriculas[$num_doc][$cod_resul])) {
@@ -916,15 +940,20 @@ try {
                 $fecha_a_guardar = $fecha_reporte . ' 00:00:00';
             }
 
-            $stmt_ins_mat->execute([$id_importacion, $fecha_reporte, (int)$ficha, $num_doc, $cod_resul, $juicio_id, $doc_instructor, $fecha_a_guardar]);
+            // Acumular en lote para inserción masiva optimizada
+            $batchMatriculas[] = [$id_importacion, $fecha_reporte, (int)$ficha, $num_doc, $cod_resul, $juicio_id, $doc_instructor, $fecha_a_guardar];
             $cache_matriculas[$num_doc][$cod_resul] = [
-                'id'             => (int)$pdo->lastInsertId('matricula_resultados_id_seq'),
+                'id'             => 0,
                 'id_juicio_cat'  => $juicio_id,
                 'juicio_nombre'  => $raw_juicio,
                 'fecha_registro' => $fecha_a_guardar,
                 'instructor'     => $doc_instructor
             ];
             $contadores['nuevos']++;
+
+            if (count($batchMatriculas) >= 200) {
+                $flushBatchMatriculas();
+            }
 
         } else {
             $actual = $cache_matriculas[$num_doc][$cod_resul];
@@ -973,6 +1002,24 @@ try {
         }
     }
 
+    // Vaciar juicios restantes en lote
+    $flushBatchMatriculas();
+
+    // Guardar en un solo lote optimizado todos los estados del corte en corte_aprendices
+    if (!empty($corteAprendicesBatch)) {
+        $cortePlaces = [];
+        $corteParams = [];
+        foreach ($corteAprendicesBatch as $cDoc => $cEstId) {
+            $cortePlaces[] = "(?, ?, ?)";
+            $corteParams[] = $id_importacion;
+            $corteParams[] = $cDoc;
+            $corteParams[] = $cEstId;
+        }
+        $sqlBatchCorte = "INSERT INTO corte_aprendices (id_importacion, numero_documento, id_estado) VALUES " . implode(", ", $cortePlaces) . " ON CONFLICT (id_importacion, numero_documento) DO UPDATE SET id_estado = EXCLUDED.id_estado";
+        $pdo->prepare($sqlBatchCorte)->execute($corteParams);
+    }
+    $marcarTiempo('PROCESAMIENTO_FILAS_Y_LOTES');
+
     // 12. Actualizar registro en historial_importaciones con métricas finales del corte
     $stmt_upd_hist = $pdo->prepare("
         UPDATE historial_importaciones SET
@@ -991,6 +1038,8 @@ try {
 
     // 14. Confirmar Transacción
     $pdo->commit();
+    $marcarTiempo('COMMIT');
+    $marcarTiempo('TOTAL_PROCESO');
 
     // 15. Devolver Respuesta JSON Compatible
     $msgUsuario = ($modo === 'SELECTIVO_HISTÓRICO')
@@ -1012,7 +1061,8 @@ try {
         'registros_omitidos'     => $contadores['omitidos'],
         'conflictos'             => $contadores['conflictos'],
         'registros_conflicto'    => $contadores['conflictos'],
-        'avance_general'         => $metricas['porcentaje_avance'] . '%'
+        'avance_general'         => $metricas['porcentaje_avance'] . '%',
+        'tiempos_ms'             => $tiempos
     ];
 
     echo json_encode([

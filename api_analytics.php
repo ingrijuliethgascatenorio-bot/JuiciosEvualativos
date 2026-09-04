@@ -19,6 +19,40 @@ $action = $_GET['action'] ?? 'inteligencia';
 $ficha  = trim($_GET['ficha']  ?? '');
 $fecha_reporte = trim($_GET['fecha_reporte'] ?? '');
 
+// ── Manejo seguro de base de datos vacía (ej. tras delete_all) ───────────────
+try {
+    $hayFichas = (int)$pdo->query("SELECT COUNT(*) FROM fichas")->fetchColumn();
+} catch (Exception $e) {
+    $hayFichas = 0;
+}
+
+if ($hayFichas === 0) {
+    switch ($action) {
+        case 'alertas':
+            jsonOk(['total' => 0, 'criticas' => 0, 'warnings' => 0, 'alertas' => []]);
+        case 'riesgo_academico':
+            jsonOk(['resumen' => ['total_aprendices' => 0, 'total_bajo' => 0, 'total_medio' => 0, 'total_alto' => 0], 'aprendices' => []]);
+        case 'ranking':
+            jsonOk(['top10' => [], 'menor_avance' => []]);
+        case 'semaforo_competencias':
+            jsonOk(['resumen' => ['total_verdes' => 0, 'total_amarillos' => 0, 'total_rojos' => 0], 'competencias' => []]);
+        case 'estadisticas_ficha':
+            jsonOk([]);
+        case 'inteligencia':
+        default:
+            jsonOk([
+                'generado_en'        => date('c'),
+                'id_importacion'     => null,
+                'fecha_reporte'      => '',
+                'riesgo_academico'   => ['resumen' => ['total_aprendices' => 0, 'total_bajo' => 0, 'total_medio' => 0, 'total_alto' => 0], 'aprendices' => []],
+                'ranking'            => ['top10' => [], 'menor_avance' => []],
+                'semaforo'           => ['resumen' => ['total_verdes' => 0, 'total_amarillos' => 0, 'total_rojos' => 0], 'competencias' => []],
+                'alertas'            => ['total' => 0, 'criticas' => 0, 'warnings' => 0, 'alertas' => []],
+                'estadisticas_ficha' => []
+            ]);
+    }
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 function resolverCorte(PDO $pdo, string $ficha, string $fecha_reporte = ''): ?int {
@@ -212,10 +246,11 @@ function getRanking(PDO $pdo, string $ficha, ?int $idCorte): array {
 // ══════════════════════════════════════════════════════════════════════════════
 function getSemaforoCompetencias(PDO $pdo, string $ficha, ?int $idCorte): array {
     $where  = [estadoActivoCondicion()];
-    $params = [':id_corte' => $idCorte];
+    $params = [];
 
     if ($idCorte !== null) {
         $where[] = "mr.id_importacion = :id_corte";
+        $params[':id_corte'] = $idCorte;
     } elseif ($ficha !== '') {
         $where[] = 'a.numero_ficha = :ficha';
         $params[':ficha'] = (int)$ficha;
