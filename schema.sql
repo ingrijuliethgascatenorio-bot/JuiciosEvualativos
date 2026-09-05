@@ -66,6 +66,9 @@ CREATE TABLE juicios_catalogo (
 
 CREATE TABLE matricula_resultados (
     id SERIAL PRIMARY KEY,
+    id_importacion INTEGER REFERENCES historial_importaciones(id) ON DELETE CASCADE,
+    fecha_reporte DATE,
+    numero_ficha INTEGER,
     num_documento_aprendiz VARCHAR(20) NOT NULL,
     codigo_resul INT NOT NULL,
     id_juicio_cat INT NOT NULL,
@@ -75,7 +78,7 @@ CREATE TABLE matricula_resultados (
     FOREIGN KEY (codigo_resul) REFERENCES resultados(codigo_resul),
     FOREIGN KEY (id_juicio_cat) REFERENCES juicios_catalogo(id_juicio_cat),
     FOREIGN KEY (num_documento_instructor) REFERENCES instructores(num_documento),
-    UNIQUE (num_documento_aprendiz, codigo_resul)
+    UNIQUE (id_importacion, num_documento_aprendiz, codigo_resul)
 );
 
 -- Datos iniciales

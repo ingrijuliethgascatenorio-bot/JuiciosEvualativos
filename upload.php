@@ -729,7 +729,7 @@ try {
     $stmt_comp = $pdo->prepare("INSERT INTO competencias (codigo_comp, nombre_comp, codigo_programa) VALUES (?, ?, ?) ON CONFLICT (codigo_comp) DO UPDATE SET nombre_comp = EXCLUDED.nombre_comp");
     $stmt_res = $pdo->prepare("INSERT INTO resultados (codigo_resul, nombre_resultado, codigo_comp) VALUES (?, ?, ?) ON CONFLICT (codigo_resul) DO UPDATE SET nombre_resultado = EXCLUDED.nombre_resultado");
     $stmt_inst = $pdo->prepare("INSERT INTO instructores (num_documento, nombres_apellidos, cargo) VALUES (?, ?, 'Instructor') ON CONFLICT (num_documento) DO NOTHING");
-    $stmt_ins_mat = $pdo->prepare("INSERT INTO matricula_resultados (id_importacion, fecha_reporte, numero_ficha, num_documento_aprendiz, codigo_resul, id_juicio_cat, num_documento_instructor, fecha_registro) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
+    $stmt_ins_mat = $pdo->prepare("INSERT INTO matricula_resultados (id_importacion, fecha_reporte, numero_ficha, num_documento_aprendiz, codigo_resul, id_juicio_cat, num_documento_instructor, fecha_registro) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (id_importacion, num_documento_aprendiz, codigo_resul) DO UPDATE SET id_juicio_cat = EXCLUDED.id_juicio_cat, num_documento_instructor = EXCLUDED.num_documento_instructor, fecha_registro = EXCLUDED.fecha_registro");
     $stmt_upd_mat = $pdo->prepare("UPDATE matricula_resultados SET id_juicio_cat = ?, num_documento_instructor = ?, fecha_registro = ? WHERE id = ?");
 
     // Contadores del resumen
@@ -756,7 +756,7 @@ try {
                 $params[] = $val;
             }
         }
-        $sqlBatch = "INSERT INTO matricula_resultados (id_importacion, fecha_reporte, numero_ficha, num_documento_aprendiz, codigo_resul, id_juicio_cat, num_documento_instructor, fecha_registro) VALUES " . implode(", ", $placeholders);
+        $sqlBatch = "INSERT INTO matricula_resultados (id_importacion, fecha_reporte, numero_ficha, num_documento_aprendiz, codigo_resul, id_juicio_cat, num_documento_instructor, fecha_registro) VALUES " . implode(", ", $placeholders) . " ON CONFLICT (id_importacion, num_documento_aprendiz, codigo_resul) DO UPDATE SET id_juicio_cat = EXCLUDED.id_juicio_cat, num_documento_instructor = EXCLUDED.num_documento_instructor, fecha_registro = EXCLUDED.fecha_registro";
         $pdo->prepare($sqlBatch)->execute($params);
         $batchMatriculas = [];
     };
