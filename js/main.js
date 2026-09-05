@@ -72,17 +72,20 @@ document.addEventListener('DOMContentLoaded', () => {
 
         try {
             const res = await fetch(`api.php?action=get_fechas_ficha&ficha=${encodeURIComponent(ficha)}`);
-            const cortes = await res.json();
-            if (Array.isArray(cortes) && cortes.length > 0) {
+            const data = await res.json();
+            const cortes = Array.isArray(data) ? data : (data && Array.isArray(data.fechas) ? data.fechas : []);
+            if (cortes.length > 0) {
                 let seleccionadoValido = false;
                 cortes.forEach((c, idx) => {
+                    const fStr = typeof c === 'string' ? c : (c.fecha_reporte || '');
+                    if (!fStr) return;
                     const opt = document.createElement('option');
-                    opt.value = c.fecha_reporte;
+                    opt.value = fStr;
                     const etiqueta = idx === 0 
-                        ? `${formatDateDisplay(c.fecha_reporte)} — Último corte` 
-                        : formatDateDisplay(c.fecha_reporte);
+                        ? `${formatDateDisplay(fStr)} — Último corte` 
+                        : formatDateDisplay(fStr);
                     opt.textContent = etiqueta;
-                    if (valorSeleccionado && valorSeleccionado === c.fecha_reporte) {
+                    if (valorSeleccionado && valorSeleccionado === fStr) {
                         opt.selected = true;
                         seleccionadoValido = true;
                     }

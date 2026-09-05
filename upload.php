@@ -155,7 +155,7 @@ if (!function_exists('obtenerMetadatosReporteExcel')) {
                     }
                 }
 
-                // 1. FECHA DEL REPORTE / CORTE (Extraída directamente del Excel)
+                // 1. FECHA DEL REPORTE (Extraída prioritariamente de "Fecha del Reporte" en el Excel)
                 if ($meta['fecha_reporte'] === null) {
                     if (
                         preg_match('/FECHA\s*(?:DEL\s*|DE\s*)?REPORTE/i', $cellText) ||
@@ -184,13 +184,16 @@ if (!function_exists('obtenerMetadatosReporteExcel')) {
                     }
                 }
 
-                // 2. FICHA DE CARACTERIZACIÓN (Extraída directamente del Excel)
+                // 2. FICHA DE CARACTERIZACIÓN (Extraída del Excel, rechazando expresamente "Estado de la Ficha")
                 if ($meta['numero_ficha'] === null) {
                     if (
-                        preg_match('/FICHA\s*DE\s*CARACTERIZACI[OÓ]N/i', $cellText) ||
-                        preg_match('/N[UÚ]MERO\s*DE\s*FICHA/i', $cellText) ||
-                        preg_match('/NO\.?\s*FICHA/i', $cellText) ||
-                        (preg_match('/^FICHA[:\s]/i', $cellText) && !preg_match('/ESTADO/i', $cellText))
+                        !preg_match('/ESTADO/i', $cellText) &&
+                        (
+                            preg_match('/FICHA\s*DE\s*CARACTERIZACI[OÓ]N/i', $cellText) ||
+                            preg_match('/N[UÚ]MERO\s*DE\s*FICHA/i', $cellText) ||
+                            preg_match('/NO\.?\s*FICHA/i', $cellText) ||
+                            preg_match('/^FICHA[:\s]/i', $cellText)
+                        )
                     ) {
                         if (preg_match('/(\d{5,})/i', $cellText, $mF)) {
                             $meta['numero_ficha'] = normalizarNumeroFicha($mF[1]);
@@ -335,13 +338,9 @@ if (!function_exists('recalcularMetricasFicha')) {
             FROM fichas f
             JOIN aprendices a ON a.numero_ficha = f.numero_ficha
             JOIN estados e ON e.id_estado = a.id_estado
-            LEFT JOIN (
-                matricula_resultados mr
-                JOIN juicios_catalogo jc ON jc.id_juicio_cat = mr.id_juicio_cat
-                JOIN resultados r ON mr.codigo_resul = r.codigo_resul
-                JOIN competencias c ON r.codigo_comp = c.codigo_comp
-            ) ON mr.num_documento_aprendiz = a.numero_documento 
-             AND (:id_imp::int IS NULL OR mr.id_importacion = :id_imp)
+            LEFT JOIN matricula_resultados mr ON mr.num_documento_aprendiz = a.numero_documento 
+                 AND (:id_imp::int IS NULL OR mr.id_importacion = :id_imp)
+            LEFT JOIN juicios_catalogo jc ON jc.id_juicio_cat = mr.id_juicio_cat
             WHERE f.numero_ficha = :ficha
               AND e.nombre NOT IN ('RETIRO VOLUNTARIO', 'CANCELADO', 'TRASLADADO', 'APLAZADO')
             GROUP BY f.numero_ficha
@@ -422,7 +421,7 @@ try {
     $spreadsheet = $reader->load($fileTmpPath);
     $sheet = $spreadsheet->getActiveSheet();
     $rows = $sheet->toArray();
-    $marcarTiempo('LECTURA_EXCEL');
+    $marcarTiempo('parse_excel');
 
     if (count($rows) <= 1) {
         echo json_encode(['success' => false, 'message' => 'El archivo está vacío o solo contiene encabezados.']);
@@ -431,7 +430,7 @@ try {
 
     // 3. Extracción de metadatos de la cabecera directamente desde el Excel
     $meta = obtenerMetadatosReporteExcel($spreadsheet);
-    $marcarTiempo('EXTRACCION_METADATOS');
+    $marcarTiempo('extraer_metadata');
 
     // 4. Validaciones obligatorias de la cabecera (Ficha y Fecha extraídas exclusivamente del archivo)
     if (empty($meta['numero_ficha']) || !is_numeric($meta['numero_ficha'])) {
@@ -569,6 +568,7 @@ try {
     $pdo->beginTransaction();
 
     // 7.1. Upsert Programa (Identidad estrictamente codigo_programa)
+    $marcarTiempo('buscar_programa');
     $stmt_prog = $pdo->prepare("
         INSERT INTO programas (codigo_programa, nombre_programa, version, modalidad)
         VALUES (?, ?, ?, ?)
@@ -581,6 +581,7 @@ try {
     $stmt_prog->execute([$cod_programa, $nom_programa, $version, $modalidad]);
 
     // 7.2. Upsert Ficha (Debe existir antes de historial_importaciones por FK)
+    $marcarTiempo('buscar_ficha');
     if (!$fichaActual) {
         $stmt_ins_f = $pdo->prepare("
             INSERT INTO fichas (numero_ficha, codigo_programa, fecha_inicio, fecha_fin, estado_ficha, fecha_reporte)
@@ -695,6 +696,7 @@ try {
     }
 
     // Caches para relaciones estructurales programa/competencia/resultado (sin inventar códigos)
+    $marcarTiempo('preparar_resultados');
     $cache_comp_programa = []; // [cod_comp => codigo_programa]
     $res_cp = $pdo->query("SELECT codigo_comp, codigo_programa FROM competencias")->fetchAll(PDO::FETCH_ASSOC);
     foreach ($res_cp as $row_cp) {
@@ -724,7 +726,7 @@ try {
     // Sentencias preparadas
     $stmt_ins_estado = $pdo->prepare("INSERT INTO estados (nombre) VALUES (?) RETURNING id_estado");
     $stmt_ins_aprendiz = $pdo->prepare("INSERT INTO aprendices (numero_documento, tipo_documento, nombres, apellidos, id_estado, numero_ficha) VALUES (?, ?, ?, ?, ?, ?)");
-    $stmt_upd_aprendiz = $pdo->prepare("UPDATE aprendices SET tipo_documento = ?, nombres = ?, apellidos = ?, id_estado = ?, numero_ficha = ? WHERE numero_documento = ?");
+    $stmt_upd_aprendiz = $pdo->prepare("UPDATE aprendices SET tipo_documento = ?, nombres = ?, apellidos = ?, id_estado = ? WHERE numero_documento = ?");
     $stmt_ins_corte_ap = $pdo->prepare("INSERT INTO corte_aprendices (id_importacion, numero_documento, id_estado) VALUES (?, ?, ?) ON CONFLICT (id_importacion, numero_documento) DO UPDATE SET id_estado = EXCLUDED.id_estado");
     $stmt_comp = $pdo->prepare("INSERT INTO competencias (codigo_comp, nombre_comp, codigo_programa) VALUES (?, ?, ?) ON CONFLICT (codigo_comp) DO UPDATE SET nombre_comp = EXCLUDED.nombre_comp");
     $stmt_res = $pdo->prepare("INSERT INTO resultados (codigo_resul, nombre_resultado, codigo_comp) VALUES (?, ?, ?) ON CONFLICT (codigo_resul) DO UPDATE SET nombre_resultado = EXCLUDED.nombre_resultado");
@@ -764,6 +766,7 @@ try {
     $corteAprendicesBatch = [];
 
     // 11. Bucle de Procesamiento Fila por Fila
+    $marcarTiempo('procesar_aprendices');
     for ($i = $headerRowIndex + 1; $i < count($rows); $i++) {
         $data = $rows[$i];
 
@@ -789,16 +792,31 @@ try {
 
         $ficha_archivo_norm = normalizarNumeroFicha($ficha);
 
-        // 11.B. Registro / Actualización del Aprendiz para la ficha del reporte
+        // 11.B. Registro / Actualización del Aprendiz para la ficha del reporte (Regla 12: NO reasignar si pertenece a otra ficha)
         if (isset($cache_aprendices_db[$num_doc])) {
             $appDb = $cache_aprendices_db[$num_doc];
             $rawDocTarget = $appDb['raw_doc'] ?? $num_doc;
-            if ($appDb['nombres'] !== $nombres || $appDb['apellidos'] !== $apellidos || $appDb['id_estado'] !== $estado_id || ($appDb['numero_ficha'] ?? '') !== $ficha_archivo_norm) {
-                $stmt_upd_aprendiz->execute([$tipo_doc, $nombres, $apellidos, $estado_id, (int)$ficha, $rawDocTarget]);
-                $cache_aprendices_db[$num_doc]['nombres'] = $nombres;
-                $cache_aprendices_db[$num_doc]['apellidos'] = $apellidos;
-                $cache_aprendices_db[$num_doc]['id_estado'] = $estado_id;
-                $cache_aprendices_db[$num_doc]['numero_ficha'] = $ficha_archivo_norm;
+            if ($appDb['numero_ficha'] !== '' && $appDb['numero_ficha'] !== $ficha_archivo_norm) {
+                // Aprendiz registrado previamente en OTRA ficha: NO modificar aprendices.numero_ficha
+                $contadores['conflictos']++;
+                if (!isset($aprendicesConflictoRegistrados[$num_doc])) {
+                    $aprendicesConflictoRegistrados[$num_doc] = true;
+                    $advertencias[] = "Aprendiz $num_doc pertenece a la ficha {$appDb['numero_ficha']}. Se conserva su ficha principal y se registra en corte_aprendices.";
+                }
+                if ($appDb['nombres'] !== $nombres || $appDb['apellidos'] !== $apellidos || $appDb['id_estado'] !== $estado_id) {
+                    $stmt_upd_aprendiz->execute([$tipo_doc, $nombres, $apellidos, $estado_id, $rawDocTarget]);
+                    $cache_aprendices_db[$num_doc]['nombres'] = $nombres;
+                    $cache_aprendices_db[$num_doc]['apellidos'] = $apellidos;
+                    $cache_aprendices_db[$num_doc]['id_estado'] = $estado_id;
+                }
+            } else {
+                // Misma ficha: actualizar datos permitidos
+                if ($appDb['nombres'] !== $nombres || $appDb['apellidos'] !== $apellidos || $appDb['id_estado'] !== $estado_id) {
+                    $stmt_upd_aprendiz->execute([$tipo_doc, $nombres, $apellidos, $estado_id, $rawDocTarget]);
+                    $cache_aprendices_db[$num_doc]['nombres'] = $nombres;
+                    $cache_aprendices_db[$num_doc]['apellidos'] = $apellidos;
+                    $cache_aprendices_db[$num_doc]['id_estado'] = $estado_id;
+                }
             }
         } else {
             $stmt_ins_aprendiz->execute([$num_doc, $tipo_doc, $nombres, $apellidos, $estado_id, (int)$ficha]);
@@ -896,7 +914,7 @@ try {
             $cache_instructores[$doc_instructor] = true;
         }
 
-        // 11.F. Juicio Evaluativo y Fecha Real
+        // 11.F. Juicio Evaluativo y Fecha Real (Regla 14: NO sustituir fecha vacía por fecha_reporte o NOW())
         $raw_juicio = normalizarTexto(getCol($data, $colMap, 'juicio', 'POR EVALUAR'));
         if ($raw_juicio === '-' || empty($raw_juicio)) $raw_juicio = 'POR EVALUAR';
         if (!in_array($raw_juicio, ['APROBADO', 'POR EVALUAR', 'NO APROBADO'])) {
@@ -910,9 +928,6 @@ try {
         // 11.G. Evaluación de Juicio en Base de Datos (Idempotencia y Cronología)
         if (!isset($cache_matriculas[$num_doc][$cod_resul])) {
             $fecha_a_guardar = $fecha_juicio;
-            if ($fecha_a_guardar === null && $raw_juicio === 'APROBADO') {
-                $fecha_a_guardar = $fecha_reporte . ' 00:00:00';
-            }
 
             // Acumular en lote para inserción masiva optimizada
             $batchMatriculas[] = [$id_importacion, $fecha_reporte, (int)$ficha, $num_doc, $cod_resul, $juicio_id, $doc_instructor, $fecha_a_guardar];
@@ -935,13 +950,13 @@ try {
             $actual_juicio = $actual['juicio_nombre'];
             $actual_fecha = $actual['fecha_registro'];
 
-            // Caso 1: Intentar degradar APROBADO a POR EVALUAR
+            // Regla 16: Intentar degradar APROBADO a POR EVALUAR NO permitido
             if ($actual_juicio === 'APROBADO' && $raw_juicio === 'POR EVALUAR') {
                 $contadores['omitidos']++;
             }
             // Caso 2: Progresión legítima de POR EVALUAR a APROBADO
             elseif ($actual_juicio === 'POR EVALUAR' && $raw_juicio === 'APROBADO') {
-                $fecha_final = $fecha_juicio ?? ($fecha_reporte . ' 00:00:00');
+                $fecha_final = $fecha_juicio;
                 $stmt_upd_mat->execute([$juicio_id, $doc_instructor, $fecha_final, $actual_id]);
                 $cache_matriculas[$num_doc][$cod_resul]['id_juicio_cat'] = $juicio_id;
                 $cache_matriculas[$num_doc][$cod_resul]['juicio_nombre'] = $raw_juicio;
@@ -949,7 +964,7 @@ try {
                 $cache_matriculas[$num_doc][$cod_resul]['instructor'] = $doc_instructor;
                 $contadores['actualizados']++;
             }
-            // Caso 3: Ambos son APROBADO (actualización de fecha o instructor)
+            // Regla 15: Ambos son APROBADO (actualización cronológica si nueva > existente)
             elseif ($actual_juicio === 'APROBADO' && $raw_juicio === 'APROBADO') {
                 if ($fecha_juicio !== null && $actual_fecha !== null) {
                     if ($fecha_juicio > $actual_fecha) {
@@ -958,7 +973,7 @@ try {
                         $cache_matriculas[$num_doc][$cod_resul]['instructor'] = $doc_instructor;
                         $contadores['actualizados']++;
                     } else {
-                        $contadores['omitidos']++;
+                        $contadores['sin_cambios']++;
                     }
                 } elseif ($fecha_juicio !== null && $actual_fecha === null) {
                     $stmt_upd_mat->execute([$juicio_id, $doc_instructor, $fecha_juicio, $actual_id]);
@@ -977,6 +992,7 @@ try {
     }
 
     // Vaciar juicios restantes en lote
+    $marcarTiempo('procesar_juicios');
     $flushBatchMatriculas();
 
     // Guardar en un solo lote optimizado todos los estados del corte en corte_aprendices
@@ -992,9 +1008,9 @@ try {
         $sqlBatchCorte = "INSERT INTO corte_aprendices (id_importacion, numero_documento, id_estado) VALUES " . implode(", ", $cortePlaces) . " ON CONFLICT (id_importacion, numero_documento) DO UPDATE SET id_estado = EXCLUDED.id_estado";
         $pdo->prepare($sqlBatchCorte)->execute($corteParams);
     }
-    $marcarTiempo('PROCESAMIENTO_FILAS_Y_LOTES');
 
     // 12. Actualizar registro en historial_importaciones con métricas finales del corte
+    $marcarTiempo('guardar_historial');
     $stmt_upd_hist = $pdo->prepare("
         UPDATE historial_importaciones SET
             total_filas = ?, registros_nuevos = ?, registros_actualizados = ?, registros_sin_cambios = ?,
@@ -1008,11 +1024,12 @@ try {
     ]);
 
     // 13. Recalcular Métricas de la Ficha para este corte
+    $marcarTiempo('recalcular_metricas');
     $metricas = recalcularMetricasFicha($pdo, $ficha, $id_importacion);
 
     // 14. Confirmar Transacción
     $pdo->commit();
-    $marcarTiempo('COMMIT');
+    $marcarTiempo('commit');
     $marcarTiempo('TOTAL_PROCESO');
 
     // 15. Devolver Respuesta JSON Compatible

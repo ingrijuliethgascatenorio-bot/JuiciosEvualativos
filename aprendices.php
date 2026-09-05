@@ -206,14 +206,17 @@
                 }
 
                 try {
-                    const res = await fetch(`api.php?action=get_fechas_ficha&ficha=${encodeURIComponent(ficha)}`).then(r => r.json());
-                    if (Array.isArray(res) && res.length > 0) {
+                    const data = await fetch(`api.php?action=get_fechas_ficha&ficha=${encodeURIComponent(ficha)}`).then(r => r.json());
+                    const cortes = Array.isArray(data) ? data : (data && Array.isArray(data.fechas) ? data.fechas : []);
+                    if (cortes.length > 0) {
                         let seleccionadoValido = false;
-                        res.forEach((c, idx) => {
+                        cortes.forEach((c, idx) => {
+                            const fStr = typeof c === 'string' ? c : (c.fecha_reporte || '');
+                            if (!fStr) return;
                             const opt = document.createElement('option');
-                            opt.value = c.fecha_reporte;
-                            opt.textContent = idx === 0 ? `${formatDateDisplay(c.fecha_reporte)} — Último corte` : formatDateDisplay(c.fecha_reporte);
-                            if (seleccionada && seleccionada === c.fecha_reporte) {
+                            opt.value = fStr;
+                            opt.textContent = idx === 0 ? `${formatDateDisplay(fStr)} — Último corte` : formatDateDisplay(fStr);
+                            if (seleccionada && seleccionada === fStr) {
                                 opt.selected = true;
                                 seleccionadoValido = true;
                             }

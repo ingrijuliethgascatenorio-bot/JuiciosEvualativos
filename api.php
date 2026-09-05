@@ -13,25 +13,25 @@ const ESTADOS_INACTIVOS_SQL = "e.nombre NOT IN ('RETIRO VOLUNTARIO', 'CANCELADO'
 if ($action === 'get_fechas_ficha') {
     $ficha = trim($_GET['ficha'] ?? '');
     if ($ficha === '') {
-        echo json_encode([]);
+        echo json_encode(['success' => true, 'fechas' => []]);
         exit;
     }
     try {
         $stmt = $pdo->prepare("
-            SELECT id as id_importacion, numero_ficha, fecha_reporte, fecha_importacion, nombre_archivo
-            FROM (
-                SELECT DISTINCT ON (fecha_reporte) id, numero_ficha, fecha_reporte, fecha_importacion, nombre_archivo
-                FROM historial_importaciones
-                WHERE numero_ficha = :ficha AND estado = 'EXITOSO'
-                ORDER BY fecha_reporte DESC, fecha_importacion DESC, id DESC
-            ) sub
+            SELECT DISTINCT fecha_reporte
+            FROM historial_importaciones
+            WHERE numero_ficha = :numero_ficha
+              AND estado = 'EXITOSO'
             ORDER BY fecha_reporte DESC
         ");
-        $stmt->execute([':ficha' => (int)$ficha]);
-        $fechas = $stmt->fetchAll(PDO::FETCH_ASSOC);
-        echo json_encode($fechas);
+        $stmt->execute([':numero_ficha' => (int)$ficha]);
+        $fechas = $stmt->fetchAll(PDO::FETCH_COLUMN);
+        echo json_encode([
+            'success' => true,
+            'fechas'  => $fechas
+        ]);
     } catch (Exception $e) {
-        echo json_encode([]);
+        echo json_encode(['success' => false, 'fechas' => [], 'message' => $e->getMessage()]);
     }
     exit;
 }
