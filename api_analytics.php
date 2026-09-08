@@ -492,10 +492,328 @@ function getEstadisticasFicha(PDO $pdo, string $ficha, ?int $idCorte): array {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
+// 6. COMPARADOR EVOLUTIVO ENTRE CORTES (TIME-TRAVEL / DIFF)
+// ══════════════════════════════════════════════════════════════════════════════
+function getComparacionCortes(PDO $pdo, string $ficha, string $fechaA, string $fechaB): array {
+    if ($ficha === '') {
+        return ['error' => 'Debe especificar el número de ficha para comparar cortes.'];
+    }
+
+    $numFicha = (int)$ficha;
+
+    // Obtener todos los cortes exitosos de esta ficha ordenados descendentemente
+    $stmtCortes = $pdo->prepare("
+        SELECT id, fecha_reporte, fecha_importacion, nombre_archivo
+        FROM historial_importaciones
+        WHERE numero_ficha = :ficha AND estado = 'EXITOSO'
+        ORDER BY fecha_reporte DESC, fecha_importacion DESC
+    ");
+    $stmtCortes->execute([':ficha' => $numFicha]);
+    $todosCortes = $stmtCortes->fetchAll(PDO::FETCH_ASSOC);
+
+    if (empty($todosCortes)) {
+        return ['error' => 'No existen cortes registrados para esta ficha.'];
+    }
+
+    if (count($todosCortes) < 2 && ($fechaA === '' || $fechaB === '')) {
+        return [
+            'error' => 'Se requieren al menos dos fechas de corte distintas para generar el análisis comparativo.',
+            'total_cortes' => count($todosCortes),
+            'cortes_disponibles' => $todosCortes
+        ];
+    }
+
+    // Resolver corte A y B
+    $corteA = null;
+    $corteB = null;
+
+    if ($fechaA !== '') {
+        foreach ($todosCortes as $c) {
+            if ($c['fecha_reporte'] === $fechaA || (string)$c['id'] === $fechaA) {
+                $corteA = $c;
+                break;
+            }
+        }
+    }
+    if ($fechaB !== '') {
+        foreach ($todosCortes as $c) {
+            if ($c['fecha_reporte'] === $fechaB || (string)$c['id'] === $fechaB) {
+                $corteB = $c;
+                break;
+            }
+        }
+    }
+
+    // Si no se pasaron fechas o alguna no coincidió, tomar por defecto los 2 últimos cortes
+    if (!$corteB) {
+        $corteB = $todosCortes[0]; // Más reciente
+    }
+    if (!$corteA) {
+        $corteA = isset($todosCortes[1]) ? $todosCortes[1] : $todosCortes[0]; // Anterior
+    }
+
+    // Asegurar que Corte A sea cronológicamente el anterior y Corte B el posterior
+    if ($corteA['fecha_reporte'] > $corteB['fecha_reporte']) {
+        $temp = $corteA;
+        $corteA = $corteB;
+        $corteB = $temp;
+    }
+
+    $idA = (int)$corteA['id'];
+    $idB = (int)$corteB['id'];
+
+    // Días transcurridos
+    $dtA = new DateTime($corteA['fecha_reporte']);
+    $dtB = new DateTime($corteB['fecha_reporte']);
+    $diasTranscurridos = $dtA->diff($dtB)->days;
+
+    // Métricas Ficha para Corte A
+    $stmtStatsA = $pdo->prepare("
+        SELECT 
+            COUNT(DISTINCT a.numero_documento)                                         AS total_aprendices,
+            COUNT(mr.id)                                                               AS total_asignaciones,
+            COUNT(mr.id) FILTER (WHERE jc.descripcion = 'APROBADO')                   AS total_aprobados,
+            COUNT(mr.id) FILTER (WHERE jc.descripcion = 'POR EVALUAR')                AS total_pendientes
+        FROM fichas f
+        JOIN aprendices a ON a.numero_ficha = f.numero_ficha
+        LEFT JOIN corte_aprendices ca ON ca.id_importacion = :id_corte AND ca.numero_documento = a.numero_documento
+        JOIN estados e ON e.id_estado = a.id_estado
+        LEFT JOIN matricula_resultados mr ON mr.num_documento_aprendiz = a.numero_documento AND mr.id_importacion = :id_corte
+        LEFT JOIN juicios_catalogo jc ON jc.id_juicio_cat = mr.id_juicio_cat
+        WHERE f.numero_ficha = :ficha
+          AND COALESCE(ca.id_estado, a.id_estado) NOT IN (SELECT id_estado FROM estados WHERE nombre IN ('RETIRO VOLUNTARIO', 'CANCELADO', 'TRASLADADO', 'APLAZADO'))
+    ");
+    $stmtStatsA->execute([':id_corte' => $idA, ':ficha' => $numFicha]);
+    $resA = $stmtStatsA->fetch(PDO::FETCH_ASSOC) ?: [];
+
+    // Métricas Ficha para Corte B
+    $stmtStatsB = $pdo->prepare("
+        SELECT 
+            COUNT(DISTINCT a.numero_documento)                                         AS total_aprendices,
+            COUNT(mr.id)                                                               AS total_asignaciones,
+            COUNT(mr.id) FILTER (WHERE jc.descripcion = 'APROBADO')                   AS total_aprobados,
+            COUNT(mr.id) FILTER (WHERE jc.descripcion = 'POR EVALUAR')                AS total_pendientes
+        FROM fichas f
+        JOIN aprendices a ON a.numero_ficha = f.numero_ficha
+        LEFT JOIN corte_aprendices ca ON ca.id_importacion = :id_corte AND ca.numero_documento = a.numero_documento
+        JOIN estados e ON e.id_estado = a.id_estado
+        LEFT JOIN matricula_resultados mr ON mr.num_documento_aprendiz = a.numero_documento AND mr.id_importacion = :id_corte
+        LEFT JOIN juicios_catalogo jc ON jc.id_juicio_cat = mr.id_juicio_cat
+        WHERE f.numero_ficha = :ficha
+          AND COALESCE(ca.id_estado, a.id_estado) NOT IN (SELECT id_estado FROM estados WHERE nombre IN ('RETIRO VOLUNTARIO', 'CANCELADO', 'TRASLADADO', 'APLAZADO'))
+    ");
+    $stmtStatsB->execute([':id_corte' => $idB, ':ficha' => $numFicha]);
+    $resB = $stmtStatsB->fetch(PDO::FETCH_ASSOC) ?: [];
+
+    $asigA = (int)($resA['total_asignaciones'] ?? 0);
+    $aprobA = (int)($resA['total_aprobados'] ?? 0);
+    $pendA = (int)($resA['total_pendientes'] ?? 0);
+    $pctAvanceA = $asigA > 0 ? round(($aprobA / $asigA) * 100, 2) : 0.0;
+
+    $asigB = (int)($resB['total_asignaciones'] ?? 0);
+    $aprobB = (int)($resB['total_aprobados'] ?? 0);
+    $pendB = (int)($resB['total_pendientes'] ?? 0);
+    $pctAvanceB = $asigB > 0 ? round(($aprobB / $asigB) * 100, 2) : 0.0;
+
+    $diffAprobados = $aprobB - $aprobA;
+    $diffPendientes = $pendB - $pendA;
+    $diffAvance = round($pctAvanceB - $pctAvanceA, 2);
+
+    $esEstancado = ($diffAprobados <= 0 && $diasTranscurridos >= 15);
+
+    // Evolución por Aprendiz
+    $sqlAprendices = "
+        SELECT 
+            a.numero_documento,
+            a.nombres,
+            a.apellidos,
+            COUNT(mr_a.id)                                                AS asig_a,
+            COUNT(mr_a.id) FILTER (WHERE jc_a.descripcion = 'APROBADO')   AS aprob_a,
+            COUNT(mr_a.id) FILTER (WHERE jc_a.descripcion = 'POR EVALUAR') AS pend_a,
+            COUNT(mr_b.id)                                                AS asig_b,
+            COUNT(mr_b.id) FILTER (WHERE jc_b.descripcion = 'APROBADO')   AS aprob_b,
+            COUNT(mr_b.id) FILTER (WHERE jc_b.descripcion = 'POR EVALUAR') AS pend_b
+        FROM aprendices a
+        LEFT JOIN corte_aprendices ca_b ON ca_b.id_importacion = :id_b AND ca_b.numero_documento = a.numero_documento
+        LEFT JOIN matricula_resultados mr_a ON mr_a.num_documento_aprendiz = a.numero_documento AND mr_a.id_importacion = :id_a
+        LEFT JOIN juicios_catalogo jc_a ON jc_a.id_juicio_cat = mr_a.id_juicio_cat
+        LEFT JOIN matricula_resultados mr_b ON mr_b.num_documento_aprendiz = a.numero_documento AND mr_b.id_importacion = :id_b
+        LEFT JOIN juicios_catalogo jc_b ON jc_b.id_juicio_cat = mr_b.id_juicio_cat
+        WHERE a.numero_ficha = :ficha
+          AND COALESCE(ca_b.id_estado, a.id_estado) NOT IN (SELECT id_estado FROM estados WHERE nombre IN ('RETIRO VOLUNTARIO', 'CANCELADO', 'TRASLADADO', 'APLAZADO'))
+        GROUP BY a.numero_documento, a.nombres, a.apellidos
+        ORDER BY (COUNT(mr_b.id) FILTER (WHERE jc_b.descripcion = 'APROBADO') - COUNT(mr_a.id) FILTER (WHERE jc_a.descripcion = 'APROBADO')) DESC, a.apellidos, a.nombres
+    ";
+    $stmtAp = $pdo->prepare($sqlAprendices);
+    $stmtAp->execute([':ficha' => $numFicha, ':id_a' => $idA, ':id_b' => $idB]);
+    $filasAp = $stmtAp->fetchAll(PDO::FETCH_ASSOC);
+
+    $aprendicesEvolucion = [];
+    $totalMejoraron = 0;
+    $totalSalieronRiesgo = 0;
+
+    foreach ($filasAp as $ap) {
+        $totA = (int)$ap['asig_a'];
+        $apA = (int)$ap['aprob_a'];
+        $peA = (int)$ap['pend_a'];
+        $pctA = $totA > 0 ? round(($apA / $totA) * 100, 1) : 0.0;
+        $riesgoA = nivelRiesgo($peA);
+
+        $totB = (int)$ap['asig_b'];
+        $apB = (int)$ap['aprob_b'];
+        $peB = (int)$ap['pend_b'];
+        $pctB = $totB > 0 ? round(($apB / $totB) * 100, 1) : 0.0;
+        $riesgoB = nivelRiesgo($peB);
+
+        $diffJuicios = $apB - $apA;
+        $diffPct = round($pctB - $pctA, 1);
+
+        if ($diffJuicios > 0) $totalMejoraron++;
+        $salioDeRiesgo = ($riesgoA === 'ALTO' && $riesgoB !== 'ALTO');
+        if ($salioDeRiesgo) $totalSalieronRiesgo++;
+
+        $aprendicesEvolucion[] = [
+            'documento'        => $ap['numero_documento'],
+            'nombres'          => $ap['nombres'],
+            'apellidos'        => $ap['apellidos'],
+            'nombre_completo'  => trim($ap['nombres'] . ' ' . $ap['apellidos']),
+            'aprobados_a'      => $apA,
+            'pendientes_a'     => $peA,
+            'avance_a'         => $pctA,
+            'riesgo_a'         => $riesgoA,
+            'aprobados_b'      => $apB,
+            'pendientes_b'     => $peB,
+            'avance_b'         => $pctB,
+            'riesgo_b'         => $riesgoB,
+            'diff_juicios'     => $diffJuicios,
+            'diff_pct'         => $diffPct,
+            'salio_de_riesgo'  => $salioDeRiesgo
+        ];
+    }
+
+    // Evolución por Competencia
+    $sqlComp = "
+        SELECT 
+            c.codigo_comp,
+            c.nombre_comp,
+            COUNT(mr_a.id)                                                AS asig_a,
+            COUNT(mr_a.id) FILTER (WHERE jc_a.descripcion = 'APROBADO')   AS aprob_a,
+            COUNT(mr_b.id)                                                AS asig_b,
+            COUNT(mr_b.id) FILTER (WHERE jc_b.descripcion = 'APROBADO')   AS aprob_b
+        FROM competencias c
+        JOIN resultados r ON r.codigo_comp = c.codigo_comp
+        JOIN aprendices a ON a.numero_ficha = :ficha
+        LEFT JOIN matricula_resultados mr_a ON mr_a.codigo_resul = r.codigo_resul AND mr_a.num_documento_aprendiz = a.numero_documento AND mr_a.id_importacion = :id_a
+        LEFT JOIN juicios_catalogo jc_a ON jc_a.id_juicio_cat = mr_a.id_juicio_cat
+        LEFT JOIN matricula_resultados mr_b ON mr_b.codigo_resul = r.codigo_resul AND mr_b.num_documento_aprendiz = a.numero_documento AND mr_b.id_importacion = :id_b
+        LEFT JOIN juicios_catalogo jc_b ON jc_b.id_juicio_cat = mr_b.id_juicio_cat
+        GROUP BY c.codigo_comp, c.nombre_comp
+        HAVING COUNT(mr_a.id) > 0 OR COUNT(mr_b.id) > 0
+        ORDER BY (COUNT(mr_b.id) FILTER (WHERE jc_b.descripcion = 'APROBADO') - COUNT(mr_a.id) FILTER (WHERE jc_a.descripcion = 'APROBADO')) DESC, c.nombre_comp
+    ";
+    $stmtCmp = $pdo->prepare($sqlComp);
+    $stmtCmp->execute([':ficha' => $numFicha, ':id_a' => $idA, ':id_b' => $idB]);
+    $filasComp = $stmtCmp->fetchAll(PDO::FETCH_ASSOC);
+
+    $competenciasEvolucion = [];
+    foreach ($filasComp as $cp) {
+        $totCa = (int)$cp['asig_a'];
+        $apCa = (int)$cp['aprob_a'];
+        $pctCa = $totCa > 0 ? round(($apCa / $totCa) * 100, 1) : 0.0;
+
+        $totCb = (int)$cp['asig_b'];
+        $apCb = (int)$cp['aprob_b'];
+        $pctCb = $totCb > 0 ? round(($apCb / $totCb) * 100, 1) : 0.0;
+
+        $competenciasEvolucion[] = [
+            'codigo_comp'   => (int)$cp['codigo_comp'],
+            'nombre_comp'   => $cp['nombre_comp'],
+            'aprobados_a'   => $apCa,
+            'pct_a'         => $pctCa,
+            'aprobados_b'   => $apCb,
+            'pct_b'         => $pctCb,
+            'diff_juicios'  => $apCb - $apCa,
+            'diff_pct'      => round($pctCb - $pctCa, 1),
+            'estado_b'      => semaforo($pctCb)
+        ];
+    }
+
+    // Bitácora de Nuevos Juicios Aprobados (específicamente qué se aprobó en B que no estaba en A)
+    $sqlNuevos = "
+        SELECT 
+            a.numero_documento,
+            a.nombres,
+            a.apellidos,
+            c.nombre_comp,
+            r.nombre_resultado,
+            mr_b.fecha_registro,
+            COALESCE(i.nombres_apellidos, 'Sin instructor') as instructor
+        FROM matricula_resultados mr_b
+        JOIN juicios_catalogo jc_b ON mr_b.id_juicio_cat = jc_b.id_juicio_cat AND jc_b.descripcion = 'APROBADO'
+        JOIN aprendices a ON a.numero_documento = mr_b.num_documento_aprendiz
+        JOIN resultados r ON r.codigo_resul = mr_b.codigo_resul
+        JOIN competencias c ON c.codigo_comp = r.codigo_comp
+        LEFT JOIN instructores i ON i.num_documento = mr_b.num_documento_instructor
+        LEFT JOIN matricula_resultados mr_a ON mr_a.id_importacion = :id_a 
+             AND mr_a.num_documento_aprendiz = mr_b.num_documento_aprendiz 
+             AND mr_a.codigo_resul = mr_b.codigo_resul
+        LEFT JOIN juicios_catalogo jc_a ON mr_a.id_juicio_cat = jc_a.id_juicio_cat
+        WHERE mr_b.id_importacion = :id_b
+          AND a.numero_ficha = :ficha
+          AND (mr_a.id IS NULL OR jc_a.descripcion != 'APROBADO')
+        ORDER BY c.nombre_comp, a.apellidos, a.nombres
+        LIMIT 250
+    ";
+    $stmtNuevos = $pdo->prepare($sqlNuevos);
+    $stmtNuevos->execute([':ficha' => $numFicha, ':id_a' => $idA, ':id_b' => $idB]);
+    $nuevosAprobadosLog = $stmtNuevos->fetchAll(PDO::FETCH_ASSOC);
+
+    return [
+        'success'              => true,
+        'ficha'                => $numFicha,
+        'corte_base'           => [
+            'id'             => $idA,
+            'fecha_reporte'  => $corteA['fecha_reporte'],
+            'nombre_archivo' => $corteA['nombre_archivo'],
+            'total_aprobados'=> $aprobA,
+            'total_pendientes'=> $pendA,
+            'porcentaje_avance'=> $pctAvanceA
+        ],
+        'corte_comparacion'    => [
+            'id'             => $idB,
+            'fecha_reporte'  => $corteB['fecha_reporte'],
+            'nombre_archivo' => $corteB['nombre_archivo'],
+            'total_aprobados'=> $aprobB,
+            'total_pendientes'=> $pendB,
+            'porcentaje_avance'=> $pctAvanceB
+        ],
+        'resumen_diferencial'  => [
+            'dias_transcurridos'    => $diasTranscurridos,
+            'diff_aprobados'        => $diffAprobados,
+            'diff_pendientes'       => $diffPendientes,
+            'diff_avance'           => $diffAvance,
+            'es_estancado'          => $esEstancado,
+            'total_aprendices'      => count($aprendicesEvolucion),
+            'aprendices_mejoraron'  => $totalMejoraron,
+            'aprendices_salieron_riesgo' => $totalSalieronRiesgo
+        ],
+        'cortes_disponibles'   => $todosCortes,
+        'aprendices'           => $aprendicesEvolucion,
+        'competencias'         => $competenciasEvolucion,
+        'bitacora_nuevos'      => $nuevosAprobadosLog
+    ];
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
 // ROUTER
 // ══════════════════════════════════════════════════════════════════════════════
 try {
     switch ($action) {
+
+        case 'comparar_cortes':
+            $fechaA = trim($_GET['corte_a'] ?? $_GET['fecha_a'] ?? '');
+            $fechaB = trim($_GET['corte_b'] ?? $_GET['fecha_b'] ?? '');
+            jsonOk(getComparacionCortes($pdo, $ficha, $fechaA, $fechaB));
 
         case 'riesgo_academico':
             jsonOk(getRiesgoAcademico($pdo, $ficha, $id_corte));

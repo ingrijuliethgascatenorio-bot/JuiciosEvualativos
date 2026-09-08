@@ -28,6 +28,7 @@
             <a href="aprendices.php" class="nav-item"><i data-lucide="users"></i> <span>Aprendices</span></a>
             <a href="analisis.php" class="nav-item active"><i data-lucide="search"></i> <span>Análisis</span></a>
             <a href="analytics.php" class="nav-item"><i data-lucide="brain-circuit"></i> <span>Analytics</span></a>
+            <a href="comparador.php" class="nav-item"><i data-lucide="git-compare"></i> <span>Comparador</span></a>
             <a href="alertas.php" class="nav-item"><i data-lucide="bell-ring"></i> <span>Alertas</span></a>
             <a href="index.php#uploadSection" class="nav-item"><i data-lucide="file-up"></i> <span>Carga Masiva</span></a>
             <div class="nav-label">Sistema</div>
@@ -194,12 +195,38 @@
             }
 
             function renderPage() {
-                const data = filteredData.length > 0 || fullData.length === 0 ? filteredData : fullData;
-                renderWithPagination(data);
+                renderWithPagination(filteredData);
+            }
+
+            function escapeHtml(str) {
+                if (!str) return '';
+                return String(str)
+                    .replace(/&/g, "&amp;")
+                    .replace(/</g, "&lt;")
+                    .replace(/>/g, "&gt;")
+                    .replace(/"/g, "&quot;");
+            }
+
+            function highlightText(text, query) {
+                if (!query || !text) return escapeHtml(text);
+                const escapedQuery = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                const regex = new RegExp(`(${escapedQuery})`, 'gi');
+                return escapeHtml(text).replace(regex, '<mark style="background:rgba(234, 179, 8, 0.25); color:inherit; padding:0 3px; border-radius:3px; font-weight:600;">$1</mark>');
             }
 
             function renderWithPagination(data) {
-                if(!data.length) { container.innerHTML = '<div style="text-align:center; padding:40px;">No hay datos</div>'; document.getElementById('paginationContainer').innerHTML = ''; return; }
+                const term = searchInput.value.trim().toLowerCase();
+                if(!data.length) { 
+                    container.innerHTML = `
+                        <div style="text-align:center; padding:50px; color:#94a3b8; background:var(--card-bg, #fff); border-radius:12px; border:1px solid var(--border-color, #e2e8f0); margin-top:20px;">
+                            <i data-lucide="search-x" style="width:40px; height:40px; margin-bottom:12px; color:#94a3b8;"></i>
+                            <div style="font-size:16px; font-weight:600; color:var(--text-main, #334155); margin-bottom:6px;">Sin resultados encontrados</div>
+                            <div style="font-size:13px;">No hay competencias ni resultados que coincidan con "${escapeHtml(searchInput.value.trim())}".</div>
+                        </div>`; 
+                    document.getElementById('paginationContainer').innerHTML = ''; 
+                    lucide.createIcons();
+                    return; 
+                }
                 const total = data.length;
                 const start = (currentPage - 1) * itemsPerPage;
                 const end = start + itemsPerPage;
@@ -212,8 +239,9 @@
                         if (res.aprobados > 0) conAvance++;
                         const pct = res.total > 0 ? Math.round((res.aprobados/res.total)*100) : 0;
                         const clsProg = pct >= 80 ? 'verde' : pct >= 50 ? 'amarillo' : 'rojo';
-                        rows += `<tr class="clickable-row" onclick="toggleApprentices(this, '${res.codigo_resul}', '${res.nombre}')">
-                            <td class="res-name">${res.nombre}</td>
+                        const resNombreHighlight = highlightText(res.nombre, term);
+                        rows += `<tr class="clickable-row" onclick="toggleApprentices(this, '${res.codigo_resul}', '${escapeHtml(res.nombre)}')">
+                            <td class="res-name">${resNombreHighlight}</td>
                             <td class="res-progress">
                                 <div class="progress-cell">
                                     <div class="progress-bar-wrap">
@@ -225,13 +253,14 @@
                             <td class="res-stats">${res.aprobados}/${res.total}</td>
                         </tr>`;
                     });
+                    const compNombreHighlight = highlightText(comp.nombre, term);
                     const card = document.createElement('div');
                     card.className = 'comp-card';
                     card.innerHTML = `
                         <div class="comp-header">
                             <div class="comp-title-box">
                                 <div class="comp-icon"><i data-lucide="book-open"></i></div>
-                                <div class="comp-name">${comp.nombre}</div>
+                                <div class="comp-name">${compNombreHighlight}</div>
                             </div>
                             <span class="comp-pill">${comp.resultados.length} Resultados (${conAvance} con Avance)</span>
                         </div>
@@ -268,8 +297,7 @@
 
             window.goToPageA = function(p) {
                 currentPage = p;
-                const data = filteredData.length > 0 || fullData.length === 0 ? filteredData : fullData;
-                renderWithPagination(data);
+                renderWithPagination(filteredData);
             }
 
             window.toggleApprentices = async (row, codigo, nombre) => {
@@ -304,8 +332,8 @@
                             <div style="display:flex; align-items:center; gap:10px; background:#fff; padding:10px; border-radius:10px; border:1px solid #e2e8f0; box-shadow:0 1px 2px rgba(0,0,0,0.05);">
                                 <div class="apprentice-avatar" style="width:28px; height:28px; font-size:10px;">${initials}</div>
                                 <div>
-                                    <div style="font-weight:600; font-size:13px; color:var(--text-main); line-height:1.2;">${ap.nombres} ${ap.apellidos}</div>
-                                    <div style="font-size:10px; color:#94a3b8;">${ap.numero_documento}</div>
+                                    <div style="font-weight:600; font-size:13px; color:var(--text-main); line-height:1.2;">${escapeHtml(ap.nombres)} ${escapeHtml(ap.apellidos)}</div>
+                                    <div style="font-size:10px; color:#94a3b8;">${escapeHtml(ap.numero_documento)}</div>
                                 </div>
                             </div>`;
                     });
@@ -327,6 +355,35 @@
                 document.getElementById('avgProgress').textContent = totalRes > 0 ? Math.round((sumPct/totalRes)*100)+'%' : '0%';
             }
 
+            function aplicarFiltroBusqueda() {
+                const term = searchInput.value.trim().toLowerCase();
+                if (!term) {
+                    filteredData = fullData;
+                } else {
+                    const result = [];
+                    fullData.forEach(comp => {
+                        const compMatch = (comp.nombre || '').toLowerCase().includes(term);
+                        if (compMatch) {
+                            // Coincide el título de la competencia: mostramos todos sus resultados
+                            result.push(comp);
+                        } else {
+                            // Verificamos si algún resultado individual coincide
+                            const matchedResul = comp.resultados.filter(r => (r.nombre || '').toLowerCase().includes(term));
+                            if (matchedResul.length > 0) {
+                                result.push({
+                                    ...comp,
+                                    resultados: matchedResul
+                                });
+                            }
+                        }
+                    });
+                    filteredData = result;
+                }
+                currentPage = 1;
+                renderPage();
+                updateStats(filteredData);
+            }
+
             fichaFilter.addEventListener('change', async () => {
                 await actualizarFechasAnalisis(fichaFilter.value);
                 guardarContextoAnalisis();
@@ -340,12 +397,11 @@
                 clearTimeout(this.ct);
                 this.ct = setTimeout(loadAnalysis, 500);
             });
+            
+            let searchTimeout = null;
             searchInput.addEventListener('input', () => {
-                const term = searchInput.value.toLowerCase();
-                const filtered = fullData.filter(c => c.nombre.toLowerCase().includes(term) || c.resultados.some(r => r.nombre.toLowerCase().includes(term)));
-                filteredData = filtered;
-                currentPage = 1;
-                renderPage();
+                clearTimeout(searchTimeout);
+                searchTimeout = setTimeout(aplicarFiltroBusqueda, 150);
             });
 
             await loadFichas();

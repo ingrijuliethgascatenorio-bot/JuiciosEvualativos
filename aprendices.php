@@ -28,6 +28,7 @@
             <a href="aprendices.php" class="nav-item active"><i data-lucide="users"></i> <span>Aprendices</span></a>
             <a href="analisis.php" class="nav-item"><i data-lucide="search"></i> <span>Análisis</span></a>
             <a href="analytics.php" class="nav-item"><i data-lucide="brain-circuit"></i> <span>Analytics</span></a>
+            <a href="comparador.php" class="nav-item"><i data-lucide="git-compare"></i> <span>Comparador</span></a>
             <a href="alertas.php" class="nav-item"><i data-lucide="bell-ring"></i> <span>Alertas</span></a>
             <a href="index.php#uploadSection" class="nav-item"><i data-lucide="file-up"></i> <span>Carga Masiva</span></a>
             <div class="nav-label">Sistema</div>
