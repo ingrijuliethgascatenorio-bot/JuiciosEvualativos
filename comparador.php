@@ -146,8 +146,8 @@
             <div class="nav-label">Menú Principal</div>
             <a href="index.php" class="nav-item"><i data-lucide="layout-dashboard"></i> <span>Dashboard</span></a>
             <a href="aprendices.php" class="nav-item"><i data-lucide="users"></i> <span>Aprendices</span></a>
-            <a href="analisis.php" class="nav-item"><i data-lucide="search"></i> <span>Análisis</span></a>
-            <a href="analytics.php" class="nav-item"><i data-lucide="brain-circuit"></i> <span>Analytics</span></a>
+            <a href="analisis.php" class="nav-item"><i data-lucide="search"></i> <span>Análisis de Proyecto</span></a>
+            <a href="analytics.php" class="nav-item"><i data-lucide="brain-circuit"></i> <span>Inteligencia Académica</span></a>
             <a href="comparador.php" class="nav-item active"><i data-lucide="git-compare"></i> <span>Comparador</span></a>
             <a href="alertas.php" class="nav-item"><i data-lucide="bell-ring"></i> <span>Alertas</span></a>
             <a href="index.php#uploadSection" class="nav-item"><i data-lucide="file-up"></i> <span>Carga Masiva</span></a>
@@ -292,6 +292,7 @@
                                 </tbody>
                             </table>
                         </div>
+                        <div id="paginAprendices" class="pagination-container-analytics"></div>
                     </div>
 
                     <!-- TAB 2: COMPETENCIAS -->
@@ -336,6 +337,7 @@
                                 </tbody>
                             </table>
                         </div>
+                        <div id="paginBitacora" class="pagination-container-analytics"></div>
                     </div>
                 </div>
             </div>
@@ -569,6 +571,8 @@
             document.getElementById('countTabComp').textContent = data.competencias.length;
             document.getElementById('countTabNuevos').textContent = data.bitacora_nuevos.length;
 
+            paginaAprendices = 1;
+            paginaBitacora = 1;
             renderTablaAprendices(data.aprendices);
             renderTablaCompetencias(data.competencias);
             renderTablaBitacora(data.bitacora_nuevos);
@@ -576,14 +580,26 @@
             lucide.createIcons();
         }
 
+        const ITEMS_PER_PAGE_COMP = 10;
+        let paginaAprendices = 1;
+        let listaAprendicesActual = [];
+        let paginaBitacora = 1;
+        let listaBitacoraActual = [];
+
         function renderTablaAprendices(aprendices) {
+            listaAprendicesActual = aprendices || [];
             const tbody = document.getElementById('tbodyAprendices');
-            if (!aprendices.length) {
+            if (!listaAprendicesActual.length) {
                 tbody.innerHTML = '<tr><td colspan="7" style="text-align:center; padding:30px; color:#94a3b8;">No hay aprendices registrados en este filtro.</td></tr>';
+                document.getElementById('paginAprendices').innerHTML = '';
                 return;
             }
 
-            tbody.innerHTML = aprendices.map(ap => {
+            const total = listaAprendicesActual.length;
+            const start = (paginaAprendices - 1) * ITEMS_PER_PAGE_COMP;
+            const pageData = listaAprendicesActual.slice(start, start + ITEMS_PER_PAGE_COMP);
+
+            tbody.innerHTML = pageData.map(ap => {
                 const diffBadge = ap.diff_juicios > 0 
                     ? `<span class="diff-badge diff-pos">+${ap.diff_juicios}</span>` 
                     : ap.diff_juicios < 0 ? `<span class="diff-badge diff-neg">${ap.diff_juicios}</span>` 
@@ -619,6 +635,11 @@
                     <td>${riesgoLabel}</td>
                 </tr>`;
             }).join('');
+
+            renderPaginacionGenerica('paginAprendices', total, paginaAprendices, (p) => {
+                paginaAprendices = p;
+                renderTablaAprendices(listaAprendicesActual);
+            });
         }
 
         function renderTablaCompetencias(competencias) {
@@ -668,13 +689,19 @@
         }
 
         function renderTablaBitacora(bitacora) {
+            listaBitacoraActual = bitacora || [];
             const tbody = document.getElementById('tbodyBitacora');
-            if (!bitacora.length) {
+            if (!listaBitacoraActual.length) {
                 tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding:30px; color:#94a3b8;">No se registraron nuevos juicios evaluativos entre estas dos fechas.</td></tr>';
+                document.getElementById('paginBitacora').innerHTML = '';
                 return;
             }
 
-            tbody.innerHTML = bitacora.map(b => `
+            const total = listaBitacoraActual.length;
+            const start = (paginaBitacora - 1) * ITEMS_PER_PAGE_COMP;
+            const pageData = listaBitacoraActual.slice(start, start + ITEMS_PER_PAGE_COMP);
+
+            tbody.innerHTML = pageData.map(b => `
                 <tr>
                     <td>
                         <div style="font-weight:600; font-size:13px; color:var(--text-main);">${escapeHtml(b.nombres)} ${escapeHtml(b.apellidos)}</div>
@@ -686,7 +713,45 @@
                     <td><div style="font-size:12px; color:#64748b;">${b.fecha_registro ? b.fecha_registro.substring(0, 10) : '-'}</div></td>
                 </tr>
             `).join('');
+
+            renderPaginacionGenerica('paginBitacora', total, paginaBitacora, (p) => {
+                paginaBitacora = p;
+                renderTablaBitacora(listaBitacoraActual);
+            });
         }
+
+        function renderPaginacionGenerica(containerId, total, currentPage, onPageChange) {
+            const container = document.getElementById(containerId);
+            if (!container) return;
+            if (total <= ITEMS_PER_PAGE_COMP) {
+                container.innerHTML = '';
+                return;
+            }
+            const totalPages = Math.ceil(total / ITEMS_PER_PAGE_COMP);
+            let startPage = Math.max(1, currentPage - 2);
+            let endPage = Math.min(totalPages, startPage + 4);
+            if (endPage - startPage < 4) startPage = Math.max(1, endPage - 4);
+
+            let btns = `<button class="page-btn-a" ${currentPage === 1 ? 'disabled' : ''} onclick="cambiarPaginaTab('${containerId}', ${currentPage - 1})">&#8249;</button>`;
+            for (let i = startPage; i <= endPage; i++) {
+                btns += `<button class="page-btn-a ${currentPage === i ? 'active' : ''}" onclick="cambiarPaginaTab('${containerId}', ${i})">${i}</button>`;
+            }
+            btns += `<button class="page-btn-a ${currentPage === totalPages ? 'disabled' : ''} onclick="cambiarPaginaTab('${containerId}', ${currentPage + 1})">&#8250;</button>`;
+            const s = (currentPage - 1) * ITEMS_PER_PAGE_COMP + 1;
+            const e = Math.min(currentPage * ITEMS_PER_PAGE_COMP, total);
+            btns += `<div class="page-info-a">${s}-${e} de ${total}</div>`;
+            container.innerHTML = btns;
+        }
+
+        window.cambiarPaginaTab = function(containerId, p) {
+            if (containerId === 'paginAprendices') {
+                paginaAprendices = p;
+                renderTablaAprendices(listaAprendicesActual);
+            } else if (containerId === 'paginBitacora') {
+                paginaBitacora = p;
+                renderTablaBitacora(listaBitacoraActual);
+            }
+        };
 
         function cambiarTab(tabId) {
             document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
@@ -701,6 +766,7 @@
 
         function filtrarAprendices(tipo, btn) {
             filtroAprendizActual = tipo;
+            paginaAprendices = 1;
             document.querySelectorAll('.filter-pill-btn').forEach(b => b.classList.remove('active'));
             if (btn) btn.classList.add('active');
             filtrarAprendicesTabla();
@@ -724,6 +790,7 @@
                 lista = lista.filter(a => a.nombre_completo.toLowerCase().includes(query) || a.documento.includes(query));
             }
 
+            paginaAprendices = 1;
             renderTablaAprendices(lista);
         }
 

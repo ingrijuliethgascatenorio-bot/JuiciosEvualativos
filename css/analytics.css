@@ -631,3 +631,73 @@
         width: auto;
     }
 }
+
+/* ── Paginación Estilizada para Inteligencia Académica ─────────────────────── */
+.pagination-container-analytics {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 18px;
+    padding-top: 14px;
+    border-top: 1px solid var(--border, #e2e8f0);
+}
+
+.page-btn-a,
+.pagination-container-analytics .page-btn {
+    min-width: 36px;
+    height: 36px;
+    padding: 0 10px;
+    border-radius: 8px;
+    border: 1px solid var(--border, #e2e8f0);
+    background: #ffffff;
+    color: var(--text-main, #334155);
+    font-family: 'Outfit', sans-serif;
+    font-weight: 600;
+    font-size: 13px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.page-btn-a:hover:not([disabled]),
+.pagination-container-analytics .page-btn:hover:not([disabled]) {
+    border-color: var(--primary, #0284c7);
+    color: var(--primary, #0284c7);
+    background: #f0f9ff;
+    transform: translateY(-1px);
+    box-shadow: 0 2px 4px rgba(2, 132, 199, 0.12);
+}
+
+.page-btn-a[disabled],
+.pagination-container-analytics .page-btn[disabled] {
+    opacity: 0.45;
+    cursor: not-allowed;
+    background: #f8fafc;
+    border-color: #e2e8f0;
+    color: #94a3b8;
+}
+
+.page-btn-a.active,
+.pagination-container-analytics .page-btn.active {
+    background: var(--primary, #0284c7);
+    color: #ffffff;
+    border-color: var(--primary, #0284c7);
+    box-shadow: 0 2px 6px rgba(2, 132, 199, 0.35);
+}
+
+.page-info-a,
+.pagination-container-analytics .page-info {
+    font-family: 'Outfit', sans-serif;
+    font-size: 12.5px;
+    color: var(--text-muted, #64748b);
+    font-weight: 500;
+    margin-left: 8px;
+    padding: 6px 12px;
+    background: #f8fafc;
+    border-radius: 6px;
+    border: 1px solid #e2e8f0;
+}

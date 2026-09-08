@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>SGJE — Analítica Académica</title>
+    <title>SGJE — Inteligencia Académica</title>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
@@ -25,8 +25,8 @@
             <div class="nav-label">Menú Principal</div>
             <a href="index.php" class="nav-item"><i data-lucide="layout-dashboard"></i> <span>Dashboard</span></a>
             <a href="aprendices.php" class="nav-item"><i data-lucide="users"></i> <span>Aprendices</span></a>
-            <a href="analisis.php" class="nav-item"><i data-lucide="search"></i> <span>Análisis</span></a>
-            <a href="analytics.php" class="nav-item active"><i data-lucide="brain-circuit"></i> <span>Analytics</span></a>
+            <a href="analisis.php" class="nav-item"><i data-lucide="search"></i> <span>Análisis de Proyecto</span></a>
+            <a href="analytics.php" class="nav-item active"><i data-lucide="brain-circuit"></i> <span>Inteligencia Académica</span></a>
             <a href="comparador.php" class="nav-item"><i data-lucide="git-compare"></i> <span>Comparador</span></a>
             <a href="alertas.php" class="nav-item"><i data-lucide="bell-ring"></i> <span>Alertas</span></a>
             <a href="index.php#uploadSection" class="nav-item"><i data-lucide="file-up"></i> <span>Carga Masiva</span></a>
@@ -146,7 +146,7 @@
                     </tbody>
                 </table>
             </div>
-            <div id="paginFichas" style="display:flex;align-items:center;justify-content:flex-end;gap:8px;margin-top:16px;"></div>
+            <div id="paginFichas" class="pagination-container-analytics"></div>
         </section>
 
         <!-- ── FILA 5: Tabla de riesgo detallada ──────────────────────────── -->
@@ -180,7 +180,7 @@
                     </tbody>
                 </table>
             </div>
-            <div id="paginRiesgo" style="display:flex;align-items:center;justify-content:flex-end;gap:8px;margin-top:16px;"></div>
+            <div id="paginRiesgo" class="pagination-container-analytics"></div>
         </section>
 
     </div><!-- /.analytics-container -->
